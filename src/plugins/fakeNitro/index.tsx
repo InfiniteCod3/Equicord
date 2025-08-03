@@ -815,7 +815,13 @@ export default definePlugin({
             isUsableTwitchSubEmote = e.roles.some(r => myRoles.includes(r));
         }
 
-        if (this.canUseEmotes || isUsableTwitchSubEmote)
+        // If user has nitro, they can use any emoji legitimately
+        // This prevents fake nitro from being applied when the user has nitro
+        if (this.canUseEmotes) {
+            return true;
+        }
+
+        if (isUsableTwitchSubEmote)
             return e.guildId === this.guildId || hasExternalEmojiPerms(channelId);
         else
             return !e.animated && e.guildId === this.guildId;
