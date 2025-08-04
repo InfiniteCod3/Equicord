@@ -7,6 +7,7 @@
 import { ApplicationCommandInputType, ApplicationCommandOptionType } from "@api/Commands";
 import { showNotification } from "@api/Notifications";
 import { definePluginSettings } from "@api/Settings";
+import { copyToClipboard } from "@utils/clipboard";
 import { EquicordDevs } from "@utils/constants";
 import { showItemInFolder } from "@utils/native";
 import definePlugin, { OptionType } from "@utils/types";
@@ -31,27 +32,20 @@ function formatMessage(message: Message, allMessages: Message[] = [], includeRep
         content += `#${author.discriminator}`;
     }
 
-    // Handle reply to another message
     if (includeReplies && ((message as any).referenced_message || message.messageReference || (message as any).type === 19)) {
         let referencedMessage: any = null;
 
-        // Try different ways to get the referenced message
         if ((message as any).referenced_message) {
-            // Direct referenced message from API
             referencedMessage = (message as any).referenced_message;
         } else if (message.messageReference?.message_id) {
-            // Traditional messageReference approach
             const replyId = message.messageReference.message_id;
 
-            // First try to find the referenced message in our exported messages
             referencedMessage = allMessages.find(msg => msg.id === replyId);
 
-            // If not found in our set, try the MessageStore as fallback
             if (!referencedMessage) {
                 referencedMessage = MessageStore.getMessage(message.messageReference.channel_id, replyId);
             }
         } else if ((message as any).message_reference?.message_id) {
-            // Try message_reference property
             const replyId = (message as any).message_reference.message_id;
 
             referencedMessage = allMessages.find(msg => msg.id === replyId);
@@ -62,11 +56,7 @@ function formatMessage(message: Message, allMessages: Message[] = [], includeRep
 
         if (referencedMessage) {
             const replyContent = referencedMessage.content || "[No text content]";
-            // Truncate long messages for readability
-            const truncatedContent = replyContent.length > 100
-                ? replyContent.substring(0, 100) + "..."
-                : replyContent;
-            content += ` (replying to: "${truncatedContent}")`;
+            content += ` (replying to: "${replyContent}")`;
         } else {
             content += " (replying to: [Message not found])";
         }
@@ -98,13 +88,11 @@ async function fetchMessages(channelId: string, limit: number): Promise<Message[
     let beforeId: string | undefined;
 
     try {
-        // Fetch messages using Discord's REST API
         while (allMessages.length < limit) {
             const remaining = limit - allMessages.length;
-            const batchSize = Math.min(100, remaining); // Discord API limit is 100 per request
+            const batchSize = Math.min(100, remaining);
 
             try {
-                // Fetch messages using Discord's REST API
                 const response = await RestAPI.get({
                     url: `/channels/${channelId}/messages`,
                     query: {
@@ -114,56 +102,44 @@ async function fetchMessages(channelId: string, limit: number): Promise<Message[
                 });
 
                 if (!response.body || !Array.isArray(response.body) || response.body.length === 0) {
-                    // No more messages available
                     break;
                 }
 
-                // Add fetched messages to our array
                 allMessages.push(...response.body);
 
-                // Set beforeId to the oldest message ID from this batch for next iteration
                 beforeId = response.body[response.body.length - 1].id;
 
-                // Add a progressive delay to respect rate limits (more delay for larger exports)
                 const delay = Math.min(200 + (allMessages.length / 100) * 50, 1000);
                 await new Promise(resolve => setTimeout(resolve, delay));
 
             } catch (apiError) {
                 console.warn("API error during message fetch:", apiError);
-                // If we hit a rate limit, wait longer before retrying
                 if ((apiError as any)?.status === 429) {
-                    const retryAfter = ((apiError as any)?.body?.retry_after || 5) * 1000; // Convert to milliseconds
+                    const retryAfter = ((apiError as any)?.body?.retry_after || 5) * 1000;
                     console.log(`Rate limited, waiting ${retryAfter / 1000} seconds...`);
                     await new Promise(resolve => setTimeout(resolve, retryAfter));
-                    // Don't increment beforeId, retry the same request
                     continue;
                 }
-                // For other errors, stop fetching
                 console.error("Non-rate-limit API error:", apiError);
                 break;
             }
         }
 
-        // Sort messages by timestamp (oldest to newest)
         allMessages.sort((a, b) => {
             const timestampA = new Date(a.timestamp.toString()).getTime();
             const timestampB = new Date(b.timestamp.toString()).getTime();
             return timestampA - timestampB;
         });
 
-        // Remove duplicates based on message ID
         const uniqueMessages = allMessages.filter((message, index, array) =>
             array.findIndex(m => m.id === message.id) === index
         );
 
-        // Return the most recent 'limit' messages in chronological order
         return uniqueMessages.slice(-limit);
 
     } catch (error) {
-        // Fallback to loaded messages only
         const loadedMessages = MessageStore.getMessages(channelId);
         if (loadedMessages?._array) {
-            // Sort and deduplicate fallback messages too
             const sortedMessages = [...loadedMessages._array].sort((a, b) => {
                 const timestampA = new Date(a.timestamp.toString()).getTime();
                 const timestampB = new Date(b.timestamp.toString()).getTime();
@@ -175,9 +151,8 @@ async function fetchMessages(channelId: string, limit: number): Promise<Message[
     }
 }
 
-async function exportMessages(channelId: string, messageCount: number) {
+async function exportMessages(channelId: string, messageCount: number, useClipboard: boolean = true) {
     try {
-        // Validate inputs
         if (!channelId) {
             showNotification({
                 title: "Export Messages",
@@ -196,7 +171,6 @@ async function exportMessages(channelId: string, messageCount: number) {
             return;
         }
 
-        // Show initial notification for large exports
         if (messageCount > 1000) {
             showNotification({
                 title: "Export Messages",
@@ -205,10 +179,8 @@ async function exportMessages(channelId: string, messageCount: number) {
             });
         }
 
-        // Add a small delay to avoid overwhelming the system
         await new Promise(resolve => setTimeout(resolve, 100));
 
-        // Fetch messages from the channel (this will get more than what's currently loaded)
         let messagesToExport: Message[];
         try {
             messagesToExport = await fetchMessages(channelId, messageCount);
@@ -230,7 +202,6 @@ async function exportMessages(channelId: string, messageCount: number) {
             return;
         }
 
-        // Validate we have messages to export
         if (messagesToExport.length === 0) {
             showNotification({
                 title: "Export Messages",
@@ -248,7 +219,6 @@ async function exportMessages(channelId: string, messageCount: number) {
         content += `Channel ID: ${channelId}\n`;
         content += "=".repeat(50) + "\n\n";
 
-        // Process messages with error handling for individual messages
         let processedCount = 0;
         for (const message of messagesToExport) {
             try {
@@ -260,7 +230,6 @@ async function exportMessages(channelId: string, messageCount: number) {
                 content += "[Error: Could not format this message]\n\n";
             }
 
-            // Add small delay every 25 messages to prevent overwhelming (reduced from 50 for better pacing)
             if (processedCount % 25 === 0) {
                 await new Promise(resolve => setTimeout(resolve, 50));
             }
@@ -275,12 +244,28 @@ async function exportMessages(channelId: string, messageCount: number) {
             return;
         }
 
-        // File saving with enhanced error handling
         try {
+            if (useClipboard) {
+                try {
+                    await copyToClipboard(content);
+                    showNotification({
+                        title: "Export Messages",
+                        body: `${processedCount} messages copied to clipboard successfully`,
+                        icon: "📋"
+                    });
+                } catch (error) {
+                    showNotification({
+                        title: "Export Messages",
+                        body: "Failed to copy messages to clipboard",
+                        icon: "❌"
+                    });
+                }
+                return;
+            }
+
             if (IS_DISCORD_DESKTOP) {
                 const data = new TextEncoder().encode(content);
 
-                // Check if file is too large (>50MB for larger exports)
                 if (data.length > 50 * 1024 * 1024) {
                     showNotification({
                         title: "Export Messages",
@@ -296,10 +281,8 @@ async function exportMessages(channelId: string, messageCount: number) {
                     showItemInFolder(result);
                 }
             } else {
-                // Browser environment
                 const file = new File([content], filename, { type: "text/plain" });
 
-                // Check file size limit for browser (increased for larger exports)
                 if (file.size > 50 * 1024 * 1024) {
                     showNotification({
                         title: "Export Messages",
@@ -351,16 +334,23 @@ export default definePlugin({
                     description: "Number of messages to export (default: 10, max: 10,000)",
                     type: ApplicationCommandOptionType.INTEGER,
                     required: false
+                },
+                {
+                    name: "clipboard",
+                    description: "Copy messages to clipboard instead of saving to file (default: true)",
+                    type: ApplicationCommandOptionType.BOOLEAN,
+                    required: false
                 }
             ],
             execute: (args, ctx) => {
                 const messageCount = Math.min(Math.max(Number(args[0]?.value) || 10, 1), 10000);
+                const useClipboard = args[1]?.value !== undefined ? Boolean(args[1]?.value) : true;
 
                 if (!ctx.channel?.id) {
                     return;
                 }
 
-                exportMessages(ctx.channel.id, messageCount);
+                exportMessages(ctx.channel.id, messageCount, useClipboard);
             }
         }
     ]
