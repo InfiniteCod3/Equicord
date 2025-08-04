@@ -289,14 +289,12 @@ async function fetchMessages(channelId: string, limit: number): Promise<Message[
             }
         }
 
-        // Sort by timestamp
         allMessages.sort((a, b) => {
             const timestampA = new Date(a.timestamp.toString()).getTime();
             const timestampB = new Date(b.timestamp.toString()).getTime();
             return timestampA - timestampB;
         });
 
-        // Remove duplicates and return most recent messages
         const uniqueMessages = allMessages.filter((message, index, array) =>
             array.findIndex(m => m.id === message.id) === index
         );
@@ -443,10 +441,8 @@ async function runAIAgent(channelId: string, prompt: string, includeContext: boo
             icon: "🤖"
         });
 
-        // Build messages array for API
         const messages: any[] = [];
 
-        // Add system prompt if configured
         if (settings.store.systemPrompt) {
             messages.push({
                 role: "system",
@@ -454,14 +450,12 @@ async function runAIAgent(channelId: string, prompt: string, includeContext: boo
             });
         }
 
-        // Add conversation history
         const conversationHistory = getConversationHistory(channelId);
         messages.push(...conversationHistory.map(entry => ({
             role: entry.role,
             content: entry.content
         })));
 
-        // Add context messages if requested
         if (includeContext) {
             try {
                 const maxContextMessages = contextCount ?? settings.store.maxContextMessages;
@@ -477,17 +471,14 @@ async function runAIAgent(channelId: string, prompt: string, includeContext: boo
                 }
             } catch (error) {
                 console.warn("Failed to fetch context messages:", error);
-                // Continue without context
             }
         }
 
-        // Add the user's prompt
         messages.push({
             role: "user",
             content: prompt
         });
 
-        // Call AI Provider API
         const response = await callAIProvider(messages);
 
         addToConversation(channelId, "user", prompt);
