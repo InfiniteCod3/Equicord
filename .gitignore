@@ -1,6 +1,7 @@
 dist
 node_modules
 .VSCodeCounter
+copilot-instructions.md
 
 *.exe
 vencord_installer

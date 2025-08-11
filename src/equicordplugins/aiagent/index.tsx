@@ -12,7 +12,7 @@ import { debounce } from "@shared/debounce";
 import { EquicordDevs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
 import { Message } from "@vencord/discord-types";
-import { MessageStore, RestAPI } from "@webpack/common";
+import { MessageStore, RestAPI, SnowflakeUtils } from "@webpack/common";
 
 interface ConversationEntry {
     role: "user" | "assistant" | "system";
@@ -30,7 +30,10 @@ const settings = definePluginSettings({
         description: "AI provider to use",
         options: [
             { label: "OpenRouter", value: "openrouter", default: true },
-            { label: "Chutes AI", value: "chutes" }
+            { label: "Chutes AI", value: "chutes" },
+            { label: "Cerebras", value: "cerebras" },
+            { label: "Groq", value: "groq" },
+            { label: "Requesty", value: "requesty" }
         ],
         default: "openrouter",
         restartNeeded: false
@@ -47,9 +50,27 @@ const settings = definePluginSettings({
         placeholder: "Your Chutes API token...",
         restartNeeded: false
     },
+    cerebrasApiKey: {
+        type: OptionType.STRING,
+        description: "Cerebras API Key (required when using Cerebras)",
+        placeholder: "Your Cerebras API key...",
+        restartNeeded: false
+    },
+    groqApiKey: {
+        type: OptionType.STRING,
+        description: "Groq API Key (required when using Groq)",
+        placeholder: "Your Groq API key...",
+        restartNeeded: false
+    },
+    requestyApiKey: {
+        type: OptionType.STRING,
+        description: "Requesty API Key (required when using Requesty)",
+        placeholder: "Your Requesty API key...",
+        restartNeeded: false
+    },
     model: {
         type: OptionType.STRING,
-        description: "Model to use (OpenRouter: anthropic/claude-3.5-sonnet, meta-llama/llama-3.2-90b-vision-instruct | Chutes: zai-org/GLM-4.5-FP8, microsoft/Phi-3.5-mini-instruct)",
+        description: "Model to use (OpenRouter: anthropic/claude-3.5-sonnet | Chutes: zai-org/GLM-4.5-FP8 | Cerebras: gpt-oss-120b | Groq: openai/gpt-oss-120b | Requesty: openai/gpt-4o)",
         default: "anthropic/claude-3.5-sonnet",
         placeholder: "Model identifier for your selected provider"
     },
@@ -89,6 +110,31 @@ const settings = definePluginSettings({
         markers: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
         default: 0.7,
         stickToMarkers: false
+    },
+    visionProvider: {
+        type: OptionType.SELECT,
+        description: "AI provider to use for image analysis",
+        options: [
+            { label: "OpenRouter", value: "openrouter", default: true },
+            { label: "Chutes AI", value: "chutes" },
+            { label: "Groq", value: "groq" },
+            { label: "Requesty", value: "requesty" }
+        ],
+        default: "openrouter",
+        restartNeeded: false
+    },
+    visionModel: {
+        type: OptionType.STRING,
+        description: "Vision model to use for image analysis (OpenRouter: anthropic/claude-3.5-sonnet, openai/gpt-4o | Chutes: openai/gpt-4o-mini | Groq: openai/gpt-oss-120b | Requesty: openai/gpt-4o)",
+        default: "anthropic/claude-3.5-sonnet",
+        placeholder: "Vision model identifier for your selected provider"
+    },
+    visionTemperature: {
+        type: OptionType.SLIDER,
+        description: "Temperature for AI vision responses (0.0 = deterministic, 1.0 = creative)",
+        markers: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+        default: 0.7,
+        stickToMarkers: false
     }
 });
 
@@ -120,9 +166,24 @@ function cleanupAllConversations() {
     }
 
     if (needsCleanup) {
-        console.log("Auro: Cleaned up old conversation data");
+        console.log("Cleaned up old conversation data");
         saveConversationDataImmediate();
     }
+}
+
+function cleanAIResponse(response: string): string {
+    // Remove thinking tags and their content
+    let cleaned = response.replace(/<think>[\s\S]*?<\/think>/gi, "");
+
+    // Also handle self-closing think tags or malformed ones
+    cleaned = cleaned.replace(/<think[^>]*\/>/gi, "");
+    cleaned = cleaned.replace(/<think[^>]*>/gi, "");
+    cleaned = cleaned.replace(/<\/think>/gi, "");
+
+    // Clean up any extra whitespace that might be left
+    cleaned = cleaned.replace(/\n\s*\n\s*\n/g, "\n\n").trim();
+
+    return cleaned;
 }
 
 async function saveConversationDataImmediate() {
@@ -333,7 +394,6 @@ async function callOpenRouter(messages: any[]): Promise<string> {
             body: JSON.stringify({
                 model: settings.store.model,
                 messages: messages,
-                temperature: settings.store.temperature,
                 max_tokens: 4096,
                 stream: false
             })
@@ -373,7 +433,6 @@ async function callChutes(messages: any[]): Promise<string> {
             body: JSON.stringify({
                 model: settings.store.model,
                 messages: messages,
-                temperature: settings.store.temperature,
                 max_tokens: 4096,
                 stream: false
             })
@@ -397,6 +456,123 @@ async function callChutes(messages: any[]): Promise<string> {
     }
 }
 
+async function callCerebras(messages: any[]): Promise<string> {
+    const apiKey = settings.store.cerebrasApiKey;
+    if (!apiKey) {
+        throw new Error("Cerebras API key not configured. Please set it in plugin settings.");
+    }
+
+    try {
+        const response = await fetch("https://api.cerebras.ai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: settings.store.model,
+                messages: messages,
+                max_completion_tokens: 65536,
+                stream: false
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`Cerebras API error (${response.status}): ${errorData}`);
+        }
+
+        const data = await response.json();
+
+        if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+            throw new Error("Invalid response from Cerebras API");
+        }
+
+        return data.choices[0].message.content;
+
+    } catch (error: any) {
+        throw new Error(`Failed to call Cerebras API: ${error.message}`);
+    }
+}
+
+async function callGroq(messages: any[]): Promise<string> {
+    const apiKey = settings.store.groqApiKey;
+    if (!apiKey) {
+        throw new Error("Groq API key not configured. Please set it in plugin settings.");
+    }
+
+    try {
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: settings.store.model,
+                messages: messages,
+                max_completion_tokens: 8192,
+                stream: false
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`Groq API error (${response.status}): ${errorData}`);
+        }
+
+        const data = await response.json();
+
+        if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+            throw new Error("Invalid response from Groq API");
+        }
+
+        return data.choices[0].message.content;
+
+    } catch (error: any) {
+        throw new Error(`Failed to call Groq API: ${error.message}`);
+    }
+}
+
+async function callRequesty(messages: any[]): Promise<string> {
+    const apiKey = settings.store.requestyApiKey;
+    if (!apiKey) {
+        throw new Error("Requesty API key not configured. Please set it in plugin settings.");
+    }
+
+    try {
+        const response = await fetch("https://router.requesty.ai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: settings.store.model,
+                messages: messages,
+                max_tokens: 4096,
+                stream: false
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`Requesty API error (${response.status}): ${errorData}`);
+        }
+
+        const data = await response.json();
+
+        if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+            throw new Error("Invalid response from Requesty API");
+        }
+
+        return data.choices[0].message.content;
+
+    } catch (error: any) {
+        throw new Error(`Failed to call Requesty API: ${error.message}`);
+    }
+}
+
 async function callAIProvider(messages: any[]): Promise<string> {
     const { provider } = settings.store;
 
@@ -405,14 +581,195 @@ async function callAIProvider(messages: any[]): Promise<string> {
             return await callOpenRouter(messages);
         case "chutes":
             return await callChutes(messages);
+        case "cerebras":
+            return await callCerebras(messages);
+        case "groq":
+            return await callGroq(messages);
+        case "requesty":
+            return await callRequesty(messages);
         default:
             throw new Error(`Unknown AI provider: ${provider}`);
     }
 }
 
-async function runAIAgent(channelId: string, prompt: string, includeContext: boolean = true, contextCount?: number) {
+async function callOpenRouterVision(messages: any[]): Promise<string> {
+    const apiKey = settings.store.openrouterApiKey;
+    if (!apiKey) {
+        throw new Error("OpenRouter API key not configured. Please set it in plugin settings.");
+    }
+
     try {
-        const { provider, openrouterApiKey, chutesApiKey, showProviderInNotifications } = settings.store;
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://discord.com",
+                "X-Title": "Equicord AI Agent Plugin"
+            },
+            body: JSON.stringify({
+                model: settings.store.visionModel,
+                messages: messages,
+                max_tokens: 4096,
+                stream: false
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`OpenRouter Vision API error (${response.status}): ${errorData}`);
+        }
+
+        const data = await response.json();
+
+        if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+            throw new Error("Invalid response from OpenRouter Vision API");
+        }
+
+        return data.choices[0].message.content;
+
+    } catch (error: any) {
+        throw new Error(`Failed to call OpenRouter Vision API: ${error.message}`);
+    }
+}
+
+async function callChutesVision(messages: any[]): Promise<string> {
+    const apiKey = settings.store.chutesApiKey;
+    if (!apiKey) {
+        throw new Error("Chutes AI API token not configured. Please set it in plugin settings.");
+    }
+
+    try {
+        const response = await fetch("https://llm.chutes.ai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: settings.store.visionModel,
+                messages: messages,
+                max_tokens: 4096,
+                stream: false
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`Chutes Vision AI API error (${response.status}): ${errorData}`);
+        }
+
+        const data = await response.json();
+
+        if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+            throw new Error("Invalid response from Chutes Vision AI API");
+        }
+
+        return data.choices[0].message.content;
+
+    } catch (error: any) {
+        throw new Error(`Failed to call Chutes Vision AI API: ${error.message}`);
+    }
+}
+
+async function callGroqVision(messages: any[]): Promise<string> {
+    const apiKey = settings.store.groqApiKey;
+    if (!apiKey) {
+        throw new Error("Groq API key not configured. Please set it in plugin settings.");
+    }
+
+    try {
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: settings.store.visionModel,
+                messages: messages,
+                max_completion_tokens: 8192,
+                stream: false
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`Groq Vision API error (${response.status}): ${errorData}`);
+        }
+
+        const data = await response.json();
+
+        if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+            throw new Error("Invalid response from Groq Vision API");
+        }
+
+        return data.choices[0].message.content;
+
+    } catch (error: any) {
+        throw new Error(`Failed to call Groq Vision API: ${error.message}`);
+    }
+}
+
+async function callRequestyVision(messages: any[]): Promise<string> {
+    const apiKey = settings.store.requestyApiKey;
+    if (!apiKey) {
+        throw new Error("Requesty API key not configured. Please set it in plugin settings.");
+    }
+
+    try {
+        const response = await fetch("https://router.requesty.ai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: settings.store.visionModel,
+                messages: messages,
+                max_tokens: 4096,
+                stream: false
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`Requesty Vision API error (${response.status}): ${errorData}`);
+        }
+
+        const data = await response.json();
+
+        if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+            throw new Error("Invalid response from Requesty Vision API");
+        }
+
+        return data.choices[0].message.content;
+
+    } catch (error: any) {
+        throw new Error(`Failed to call Requesty Vision API: ${error.message}`);
+    }
+}
+
+async function callVisionProvider(messages: any[]): Promise<string> {
+    const { visionProvider } = settings.store;
+
+    switch (visionProvider) {
+        case "openrouter":
+            return await callOpenRouterVision(messages);
+        case "chutes":
+            return await callChutesVision(messages);
+        case "groq":
+            return await callGroqVision(messages);
+        case "requesty":
+            return await callRequestyVision(messages);
+        default:
+            throw new Error(`Unknown vision AI provider: ${visionProvider}`);
+    }
+}
+
+async function runAIAgent(channelId: string, prompt: string, includeContext: boolean = true, contextCount?: number, isPublic: boolean = false, imageAttachment?: any, fileAttachment?: any) {
+    try {
+        const { provider, openrouterApiKey, chutesApiKey, cerebrasApiKey, groqApiKey, requestyApiKey, visionProvider, showProviderInNotifications } = settings.store;
 
         if (provider === "openrouter" && !openrouterApiKey) {
             showNotification({
@@ -428,9 +785,71 @@ async function runAIAgent(channelId: string, prompt: string, includeContext: boo
                 icon: "❌"
             });
             return;
+        } else if (provider === "cerebras" && !cerebrasApiKey) {
+            showNotification({
+                title: "Auro",
+                body: "Please configure your Cerebras API key in plugin settings",
+                icon: "❌"
+            });
+            return;
+        } else if (provider === "groq" && !groqApiKey) {
+            showNotification({
+                title: "Auro",
+                body: "Please configure your Groq API key in plugin settings",
+                icon: "❌"
+            });
+            return;
+        } else if (provider === "requesty" && !requestyApiKey) {
+            showNotification({
+                title: "Auro",
+                body: "Please configure your Requesty API key in plugin settings",
+                icon: "❌"
+            });
+            return;
         }
 
-        const providerName = provider === "openrouter" ? "OpenRouter" : "Chutes AI";
+        if (imageAttachment) {
+            if (visionProvider === "openrouter" && !openrouterApiKey) {
+                showNotification({
+                    title: "Auro",
+                    body: "Please configure your OpenRouter API key for vision models in plugin settings",
+                    icon: "❌"
+                });
+                return;
+            } else if (visionProvider === "chutes" && !chutesApiKey) {
+                showNotification({
+                    title: "Auro",
+                    body: "Please configure your Chutes AI API token for vision models in plugin settings",
+                    icon: "❌"
+                });
+                return;
+            } else if (visionProvider === "groq" && !groqApiKey) {
+                showNotification({
+                    title: "Auro",
+                    body: "Please configure your Groq API key for vision models in plugin settings",
+                    icon: "❌"
+                });
+                return;
+            } else if (visionProvider === "requesty" && !requestyApiKey) {
+                showNotification({
+                    title: "Auro",
+                    body: "Please configure your Requesty API key for vision models in plugin settings",
+                    icon: "❌"
+                });
+                return;
+            }
+        }
+
+        const providerName = imageAttachment
+            ? (visionProvider === "openrouter" ? "OpenRouter Vision" :
+                visionProvider === "chutes" ? "Chutes AI Vision" :
+                    visionProvider === "groq" ? "Groq Vision" :
+                        visionProvider === "requesty" ? "Requesty Vision" : "Unknown Vision")
+            : (provider === "openrouter" ? "OpenRouter" :
+                provider === "chutes" ? "Chutes AI" :
+                    provider === "cerebras" ? "Cerebras" :
+                        provider === "groq" ? "Groq" :
+                            provider === "requesty" ? "Requesty" : "Unknown");
         const processingMessage = showProviderInNotifications
             ? `Processing request using ${providerName}...`
             : "Processing request...";
@@ -474,38 +893,111 @@ async function runAIAgent(channelId: string, prompt: string, includeContext: boo
             }
         }
 
-        messages.push({
-            role: "user",
-            content: prompt
-        });
+        let enhancedPrompt = prompt;
 
-        const response = await callAIProvider(messages);
+        if (imageAttachment) {
+            try {
+                const imageResponse = await fetch(imageAttachment.url);
+                const imageData = await imageResponse.arrayBuffer();
+                const base64Image = btoa(String.fromCharCode(...new Uint8Array(imageData)));
+                const mimeType = imageAttachment.content_type || "image/jpeg";
 
-        addToConversation(channelId, "user", prompt);
-        addToConversation(channelId, "assistant", response);
+                enhancedPrompt += `\n\n[Image attached: ${imageAttachment.filename}]`;
 
-        const auroUser = {
-            id: "auro-ai-agent",
-            username: "Auro",
-            discriminator: "0000",
-            bot: true,
-            system: false,
-            publicFlags: 0
-        };
+                messages.push({
+                    role: "user",
+                    content: [
+                        {
+                            type: "text",
+                            text: enhancedPrompt
+                        },
+                        {
+                            type: "image_url",
+                            image_url: {
+                                url: `data:${mimeType};base64,${base64Image}`
+                            }
+                        }
+                    ]
+                });
+            } catch (error) {
+                console.error("Failed to process image attachment:", error);
+                showNotification({
+                    title: "Auro Error",
+                    body: "Failed to process image attachment",
+                    icon: "❌"
+                });
+                return;
+            }
+        } else if (fileAttachment) {
+            try {
+                const fileResponse = await fetch(fileAttachment.url);
+                const fileContent = await fileResponse.text();
 
-        const botMessage = sendBotMessage(channelId, {
-            content: response
-        });
+                enhancedPrompt += `\n\n[File attached: ${fileAttachment.filename}]\n\`\`\`\n${fileContent}\n\`\`\``;
 
-        if (botMessage) {
-            (botMessage as any).author = auroUser;
+                messages.push({
+                    role: "user",
+                    content: enhancedPrompt
+                });
+            } catch (error) {
+                console.error("Failed to process file attachment:", error);
+                showNotification({
+                    title: "Auro Error",
+                    body: "Failed to process file attachment",
+                    icon: "❌"
+                });
+                return;
+            }
+        } else {
+            messages.push({
+                role: "user",
+                content: enhancedPrompt
+            });
         }
 
-        showNotification({
-            title: "Auro",
-            body: "Response sent successfully",
-            icon: "✅"
-        });
+        const response = imageAttachment
+            ? await callVisionProvider(messages)
+            : await callAIProvider(messages);
+
+        // Clean up the response to remove thinking tags
+        const cleanedResponse = cleanAIResponse(response);
+
+        addToConversation(channelId, "user", enhancedPrompt);
+        addToConversation(channelId, "assistant", cleanedResponse);
+
+        if (isPublic) {
+            try {
+                await RestAPI.post({
+                    url: `/channels/${channelId}/messages`,
+                    body: {
+                        content: `Auro says: ${cleanedResponse}`,
+                        nonce: SnowflakeUtils.fromTimestamp(Date.now()),
+                    }
+                });
+
+                showNotification({
+                    title: "Auro",
+                    body: "Response sent publicly as you",
+                    icon: "✅"
+                });
+            } catch (error: any) {
+                showNotification({
+                    title: "Auro Error",
+                    body: `Failed to send public message: ${error.message}`,
+                    icon: "❌"
+                });
+            }
+        } else {
+            sendBotMessage(channelId, {
+                content: cleanedResponse
+            });
+
+            showNotification({
+                title: "Auro",
+                body: "Response sent privately through Clyde",
+                icon: "✅"
+            });
+        }
     } catch (error: any) {
         showNotification({
             title: "Auro Error",
@@ -552,18 +1044,46 @@ export default definePlugin({
                     description: "Number of recent messages to include as context (default from settings)",
                     type: ApplicationCommandOptionType.INTEGER,
                     required: false
+                },
+                {
+                    name: "public",
+                    description: "Send the AI response publicly in the chat (default: false, sends privately through Clyde)",
+                    type: ApplicationCommandOptionType.BOOLEAN,
+                    required: false
+                },
+                {
+                    name: "image",
+                    description: "Image URL or attachment to analyze (for vision models)",
+                    type: ApplicationCommandOptionType.ATTACHMENT,
+                    required: false
+                },
+                {
+                    name: "file",
+                    description: "File attachment to analyze (code, documents, logs, etc.)",
+                    type: ApplicationCommandOptionType.ATTACHMENT,
+                    required: false
                 }
             ],
             execute: (args, ctx) => {
-                const prompt = args[0]?.value as string;
-                const includeContext = args[1]?.value !== undefined ? Boolean(args[1]?.value) : true;
-                const contextCount = args[2]?.value !== undefined ? Number(args[2]?.value) : undefined;
+                // Build a map of provided options by name to avoid relying on positional indices,
+                // since optional options may be omitted and the args array order may vary.
+                const optionMap: Record<string, any> = {};
+                (args || []).forEach((opt: any) => {
+                    if (opt && opt.name) optionMap[opt.name] = opt.value;
+                });
+
+                const prompt = (optionMap.prompt as string) || (args[0]?.value as string);
+                const includeContext = optionMap.context !== undefined ? Boolean(optionMap.context) : true;
+                const contextCount = optionMap.contextcount !== undefined ? Number(optionMap.contextcount) : undefined;
+                const isPublic = optionMap.public !== undefined ? Boolean(optionMap.public) : false;
+                const imageAttachment = optionMap.image !== undefined ? optionMap.image : args[4]?.value;
+                const fileAttachment = optionMap.file !== undefined ? optionMap.file : args[5]?.value;
 
                 if (!ctx.channel?.id || !prompt) {
                     return;
                 }
 
-                runAIAgent(ctx.channel.id, prompt, includeContext, contextCount);
+                runAIAgent(ctx.channel.id, prompt, includeContext, contextCount, isPublic, imageAttachment, fileAttachment);
             }
         },
         {
@@ -639,6 +1159,113 @@ export default definePlugin({
                         icon: "❌"
                     });
                 }
+            }
+        },
+        {
+            name: "aisummarize",
+            description: "Summarize recent channel activity",
+            inputType: ApplicationCommandInputType.BUILT_IN,
+            options: [
+                {
+                    name: "count",
+                    description: "Number of recent messages to summarize (default: 50)",
+                    type: ApplicationCommandOptionType.INTEGER,
+                    required: false
+                },
+                {
+                    name: "public",
+                    description: "Send the summary publicly (default: false)",
+                    type: ApplicationCommandOptionType.BOOLEAN,
+                    required: false
+                }
+            ],
+            execute: async (args, ctx) => {
+                if (!ctx.channel?.id) {
+                    return;
+                }
+
+                const count = args[0]?.value ? Number(args[0].value) : 50;
+                const isPublic = args[1]?.value !== undefined ? Boolean(args[1].value) : false;
+                const prompt = "Please provide a concise summary of the recent activity in this channel. Focus on the main topics discussed, key decisions made, and important information shared.";
+
+                runAIAgent(ctx.channel.id, prompt, true, count, isPublic);
+            }
+        },
+        {
+            name: "aitranslate",
+            description: "Translate text using AI",
+            inputType: ApplicationCommandInputType.BUILT_IN,
+            options: [
+                {
+                    name: "text",
+                    description: "Text to translate",
+                    type: ApplicationCommandOptionType.STRING,
+                    required: true
+                },
+                {
+                    name: "to",
+                    description: "Target language (e.g., spanish, french, japanese)",
+                    type: ApplicationCommandOptionType.STRING,
+                    required: true
+                },
+                {
+                    name: "public",
+                    description: "Send the translation publicly (default: false)",
+                    type: ApplicationCommandOptionType.BOOLEAN,
+                    required: false
+                }
+            ],
+            execute: async (args, ctx) => {
+                if (!ctx.channel?.id) {
+                    return;
+                }
+
+                const text = args[0]?.value as string;
+                const targetLanguage = args[1]?.value as string;
+                const isPublic = args[2]?.value !== undefined ? Boolean(args[2].value) : false;
+
+                if (!text || !targetLanguage) {
+                    showNotification({
+                        title: "Auro Error",
+                        body: "Please provide both text and target language",
+                        icon: "❌"
+                    });
+                    return;
+                }
+
+                const prompt = `Please translate the following text to ${targetLanguage}. Only provide the translation, no explanations:\n\n${text}`;
+
+                runAIAgent(ctx.channel.id, prompt, false, undefined, isPublic);
+            }
+        },
+        {
+            name: "aisentiment",
+            description: "Analyze sentiment of recent messages",
+            inputType: ApplicationCommandInputType.BUILT_IN,
+            options: [
+                {
+                    name: "count",
+                    description: "Number of recent messages to analyze (default: 25)",
+                    type: ApplicationCommandOptionType.INTEGER,
+                    required: false
+                },
+                {
+                    name: "public",
+                    description: "Send the analysis publicly (default: false)",
+                    type: ApplicationCommandOptionType.BOOLEAN,
+                    required: false
+                }
+            ],
+            execute: async (args, ctx) => {
+                if (!ctx.channel?.id) {
+                    return;
+                }
+
+                const count = args[0]?.value ? Number(args[0].value) : 25;
+                const isPublic = args[1]?.value !== undefined ? Boolean(args[1].value) : false;
+                const prompt = "Please analyze the sentiment and mood of the recent messages in this channel. Provide insights on the overall tone, emotional patterns, and any notable trends. Be objective and constructive in your analysis.";
+
+                runAIAgent(ctx.channel.id, prompt, true, count, isPublic);
             }
         }
     ]
