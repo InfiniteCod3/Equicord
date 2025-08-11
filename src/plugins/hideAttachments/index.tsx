@@ -25,7 +25,7 @@ import { ImageInvisible, ImageVisible } from "@components/Icons";
 import { Devs } from "@utils/constants";
 import { classes } from "@utils/misc";
 import definePlugin from "@utils/types";
-import { MessageSnapshot } from "@vencord/discord-types";
+import { Message } from "@vencord/discord-types";
 import { ChannelStore } from "@webpack/common";
 
 const KEY = "HideAttachments_HiddenIds";
@@ -40,6 +40,8 @@ async function getHiddenMessages() {
 const saveHiddenMessages = (ids: Set<string>) => set(KEY, ids);
 
 migratePluginSettings("HideMedia", "HideAttachments");
+
+const hasMedia = (msg: Message) => msg.attachments.length > 0 || msg.embeds.length > 0 || msg.stickerItems.length > 0;
 
 export default definePlugin({
     name: "HideMedia",
@@ -56,14 +58,9 @@ export default definePlugin({
     }],
 
     renderMessagePopoverButton(msg) {
-        // @ts-expect-error - discord-types lags behind discord.
-        const hasAttachmentsInShapshots = msg.messageSnapshots.some(
-            (snapshot: MessageSnapshot) => snapshot?.message.attachments.length
-        );
+        if (!hasMedia(msg) && !msg.messageSnapshots.some(s => hasMedia(s.message))) return null;
 
-        if (!msg.attachments.length && !msg.embeds.length && !msg.stickerItems.length && !hasAttachmentsInShapshots) return null;
-
-        const isHidden = hiddenMessages instanceof Set ? hiddenMessages.has(msg.id) : false;
+        const isHidden = hiddenMessages.has(msg.id);
 
         return {
             label: isHidden ? "Show Media" : "Hide Media",
@@ -93,7 +90,7 @@ export default definePlugin({
     },
 
     shouldHide(messageId: string) {
-        return hiddenMessages instanceof Set ? hiddenMessages.has(messageId) : false;
+        return hiddenMessages.has(messageId);
     },
 
     async toggleHide(channelId: string, messageId: string) {
