@@ -20,7 +20,7 @@ on:
 
 env:
     FORCE_COLOR: true
-    GITHUB_TOKEN: ${{ secrets.ETOKEN }}
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     REPO: Equicord/Equibored
     USERNAME: GitHub-Actions
 
