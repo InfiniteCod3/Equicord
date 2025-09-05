@@ -25,9 +25,9 @@ const settings = definePluginSettings({
 
 function formatMessage(message: Message, allMessages: Message[] = [], includeReplies = true) {
     const { author } = message;
-    const timestamp = new Date(message.timestamp.toString()).toLocaleString();
 
-    let content = `[${timestamp}] ${author.username}`;
+    // Timestamp removed from individual messages; a consolidated time range is shown in the header instead.
+    let content = `${author.username}`;
     if (author.discriminator !== "0") {
         content += `#${author.discriminator}`;
     }
@@ -214,9 +214,15 @@ async function exportMessages(channelId: string, messageCount: number, useClipbo
         const timestamp = new Date().toISOString().split("T")[0];
         const filename = `messages-${channelId}-${timestamp}.txt`;
 
+        const firstMsg = messagesToExport[0];
+        const lastMsg = messagesToExport[messagesToExport.length - 1];
+        const firstDate = new Date(firstMsg.timestamp.toString());
+        const lastDate = new Date(lastMsg.timestamp.toString());
+
         let content = `Exported ${messagesToExport.length} messages from channel\n`;
         content += `Export date: ${new Date().toLocaleString()}\n`;
         content += `Channel ID: ${channelId}\n`;
+        content += `Message time range: ${firstDate.toLocaleString()} -> ${lastDate.toLocaleString()}\n`;
         content += "=".repeat(50) + "\n\n";
 
         let processedCount = 0;
