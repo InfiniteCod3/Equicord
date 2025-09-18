@@ -55,14 +55,47 @@ function formatMessage(message: Message, allMessages: Message[] = [], includeRep
         }
 
         if (referencedMessage) {
-            const replyContent = referencedMessage.content || "[No text content]";
-            content += ` (replying to: "${replyContent}")`;
+            let replyContent: string | undefined = (referencedMessage as any).content;
+
+            // If the referenced message has no text, try to surface sticker names instead
+            if (!replyContent || replyContent.trim().length === 0) {
+                const refStickerItems = ((referencedMessage as any).stickerItems ?? (referencedMessage as any).sticker_items ?? []) as Array<{ name?: string; }>;
+                const refStickerNames = Array.isArray(refStickerItems)
+                    ? refStickerItems.map(s => s?.name).filter((n): n is string => !!n && n.trim().length > 0)
+                    : [];
+                if (refStickerNames.length > 0) {
+                    replyContent = `[Sticker${refStickerNames.length > 1 ? "s" : ""}] ${refStickerNames.join(", ")}`;
+                }
+            }
+
+            content += ` (replying to: "${replyContent || "[No text content]"}")`;
         } else {
             content += " (replying to: [Message not found])";
         }
     }
 
-    content += `: ${message.content}`;
+    // Prefer message text; if empty, include sticker names so the export isn't blank
+    const textContent = (message.content ?? "").trim();
+
+    // Gather sticker items from both camelCase and snake_case shapes
+    const stickerItems = (((message as any).stickerItems ?? (message as any).sticker_items) ?? []) as Array<{
+        name?: string;
+    }>;
+    const stickerNames = Array.isArray(stickerItems)
+        ? stickerItems.map(s => s?.name).filter((n): n is string => !!n && n.trim().length > 0)
+        : [];
+
+    if (textContent.length > 0) {
+        content += `: ${textContent}`;
+        if (stickerNames.length > 0) {
+            content += `\n  Stickers: ${stickerNames.join(", ")}`;
+        }
+    } else if (stickerNames.length > 0) {
+        content += `: [Sticker${stickerNames.length > 1 ? "s" : ""}] ${stickerNames.join(", ")}`;
+    } else {
+        // No text and no stickers; keep the colon to maintain format
+        content += ":";
+    }
 
     if (message.attachments?.length > 0) {
         content += "\n  Attachments:";
