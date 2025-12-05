@@ -21,23 +21,25 @@ import "./fixDiscordBadgePadding.css";
 import { _getBadges, BadgePosition, BadgeUserArgs, ProfileBadge } from "@api/Badges";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { openContributorModal } from "@components/settings/tabs";
-import { isEquicordDonor } from "@components/settings/tabs/vencord";
 import { Devs } from "@utils/constants";
+import { copyWithToast } from "@utils/discord";
 import { Logger } from "@utils/Logger";
-import { copyWithToast, shouldShowContributorBadge, shouldShowEquicordContributorBadge } from "@utils/misc";
+import { shouldShowContributorBadge, shouldShowEquicordContributorBadge } from "@utils/misc";
 import definePlugin from "@utils/types";
 import { User } from "@vencord/discord-types";
 import { ContextMenuApi, Menu, Toasts, UserStore } from "@webpack/common";
 
+import Plugins, { PluginMeta } from "~plugins";
+
 import { EquicordDonorModal, VencordDonorModal } from "./modals";
 
 const CONTRIBUTOR_BADGE = "https://cdn.discordapp.com/emojis/1092089799109775453.png?size=64";
-const EQUICORD_CONTRIBUTOR_BADGE = "https://i.imgur.com/57ATLZu.png";
-const EQUICORD_DONOR_BADGE = "https://cdn.nest.rip/uploads/78cb1e77-b7a6-4242-9089-e91f866159bf.png";
+const EQUICORD_CONTRIBUTOR_BADGE = "https://equicord.org/assets/favicon.png";
+const USERPLUGIN_CONTRIBUTOR_BADGE = "https://equicord.org/assets/icons/misc/userplugin.png";
 
 const ContributorBadge: ProfileBadge = {
     description: "Vencord Contributor",
-    image: CONTRIBUTOR_BADGE,
+    iconSrc: CONTRIBUTOR_BADGE,
     position: BadgePosition.START,
     shouldShow: ({ userId }) => shouldShowContributorBadge(userId),
     onClick: (_, { userId }) => openContributorModal(UserStore.getUser(userId))
@@ -45,24 +47,37 @@ const ContributorBadge: ProfileBadge = {
 
 const EquicordContributorBadge: ProfileBadge = {
     description: "Equicord Contributor",
-    image: EQUICORD_CONTRIBUTOR_BADGE,
+    iconSrc: EQUICORD_CONTRIBUTOR_BADGE,
     position: BadgePosition.START,
     shouldShow: ({ userId }) => shouldShowEquicordContributorBadge(userId),
-    onClick: (_, { userId }) => openContributorModal(UserStore.getUser(userId))
+    onClick: (_, { userId }) => openContributorModal(UserStore.getUser(userId)),
+    props: {
+        style: {
+            borderRadius: "50%",
+            transform: "scale(0.9)"
+        }
+    },
 };
 
-const EquicordDonorBadge: ProfileBadge = {
-    description: "Equicord Donor",
-    image: EQUICORD_DONOR_BADGE,
+const UserPluginContributorBadge: ProfileBadge = {
+    description: "User Plugin Contributor",
+    iconSrc: USERPLUGIN_CONTRIBUTOR_BADGE,
     position: BadgePosition.START,
     shouldShow: ({ userId }) => {
-        const donorBadges = EquicordDonorBadges[userId]?.map(badge => badge.badge);
-        const hasDonorBadge = donorBadges?.includes("https://cdn.nest.rip/uploads/78cb1e77-b7a6-4242-9089-e91f866159bf.png");
-        return isEquicordDonor(userId) && !hasDonorBadge;
+        if (!IS_DEV) return false;
+        const allPlugins = Object.values(Plugins);
+        return allPlugins.some(p => {
+            const pluginMeta = PluginMeta[p.name];
+            return pluginMeta?.userPlugin && p.authors.some(a => a.id.toString() === userId);
+        });
     },
-    onClick: () => {
-        return EquicordDonorModal();
-    }
+    onClick: (_, { userId }) => openContributorModal(UserStore.getUser(userId)),
+    props: {
+        style: {
+            borderRadius: "50%",
+            transform: "scale(0.9)"
+        }
+    },
 };
 
 let DonorBadges = {} as Record<string, Array<Record<"tooltip" | "badge", string>>>;
@@ -85,7 +100,7 @@ async function loadAllBadges(noCache = false) {
 
 let intervalId: any;
 
-function BadgeContextMenu({ badge }: { badge: ProfileBadge & BadgeUserArgs; }) {
+export function BadgeContextMenu({ badge }: { badge: ProfileBadge & BadgeUserArgs; }) {
     return (
         <Menu.Menu
             navId="vc-badge-context"
@@ -99,11 +114,11 @@ function BadgeContextMenu({ badge }: { badge: ProfileBadge & BadgeUserArgs; }) {
                     action={() => copyWithToast(badge.description!)}
                 />
             )}
-            {badge.image && (
+            {badge.iconSrc && (
                 <Menu.MenuItem
                     id="vc-badge-copy-link"
                     label="Copy Badge Image Link"
-                    action={() => copyWithToast(badge.image!)}
+                    action={() => copyWithToast(badge.iconSrc!)}
                 />
             )}
         </Menu.Menu>
@@ -127,8 +142,8 @@ export default definePlugin({
             find: "#{intl::PROFILE_USER_BADGES}",
             replacement: [
                 {
-                    match: /(alt:" ","aria-hidden":!0,src:)(.+?)(?=,)(?<=href:(\i)\.link.+?)/,
-                    replace: (_, rest, originalSrc, badge) => `...${badge}.props,${rest}${badge}.image??(${originalSrc})`
+                    match: /alt:" ","aria-hidden":!0,src:.{0,50}(\i).iconSrc/,
+                    replace: "...$1.props,$&"
                 },
                 {
                     match: /(?<="aria-label":(\i)\.description,.{0,200})children:/,
@@ -170,7 +185,7 @@ export default definePlugin({
         }
     },
 
-    userProfileBadges: [ContributorBadge, EquicordContributorBadge, EquicordDonorBadge],
+    userProfileBadges: [ContributorBadge, EquicordContributorBadge, UserPluginContributorBadge],
 
     async start() {
         await loadAllBadges();
@@ -216,7 +231,7 @@ export default definePlugin({
 
     getDonorBadges(userId: string) {
         return DonorBadges[userId]?.map(badge => ({
-            image: badge.badge,
+            iconSrc: badge.badge,
             description: badge.tooltip,
             position: BadgePosition.START,
             props: {
@@ -236,7 +251,7 @@ export default definePlugin({
 
     getEquicordDonorBadges(userId: string) {
         return EquicordDonorBadges[userId]?.map(badge => ({
-            image: badge.badge,
+            iconSrc: badge.badge,
             description: badge.tooltip,
             position: BadgePosition.START,
             props: {

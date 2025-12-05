@@ -16,17 +16,20 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { ProfileBadge } from "@api/Badges";
-import { ChatBarButtonFactory } from "@api/ChatButtons";
-import { NavContextMenuPatchCallback } from "@api/ContextMenu";
-import { MemberListDecoratorFactory } from "@api/MemberListDecorators";
-import { MessageAccessoryFactory } from "@api/MessageAccessories";
-import { MessageDecorationFactory } from "@api/MessageDecorations";
-import { MessageClickListener, MessageEditListener, MessageSendListener } from "@api/MessageEvents";
-import { MessagePopoverButtonFactory } from "@api/MessagePopover";
-import { NicknameIconFactory } from "@api/NicknameIcons";
-import { Command, FluxEvents } from "@vencord/discord-types";
-import { ReactNode } from "react";
+import { AudioProcessor } from "@api/AudioPlayer";
+import type { ProfileBadge } from "@api/Badges";
+import type { ChatBarButtonData, ChatBarButtonFactory } from "@api/ChatButtons";
+import type { NavContextMenuPatchCallback } from "@api/ContextMenu";
+import { HeaderBarButtonFactory } from "@api/HeaderBar";
+import type { MemberListDecoratorFactory } from "@api/MemberListDecorators";
+import type { MessageAccessoryFactory } from "@api/MessageAccessories";
+import type { MessageDecorationFactory } from "@api/MessageDecorations";
+import type { MessageClickListener, MessageEditListener, MessageSendListener } from "@api/MessageEvents";
+import type { MessagePopoverButtonData, MessagePopoverButtonFactory } from "@api/MessagePopover";
+import type { NicknameIconFactory } from "@api/NicknameIcons";
+import type { Command, FluxEvents } from "@vencord/discord-types";
+import type { ReactNode } from "react";
+import type { LiteralUnion } from "type-fest";
 
 // exists to export default definePlugin({...})
 export default function definePlugin<P extends PluginDef>(p: P & Record<PropertyKey, any>) {
@@ -95,6 +98,8 @@ export interface Plugin extends PluginDef {
     isDependency?: boolean;
 }
 
+export type IconComponent = (props: IconProps & Record<string, any>) => ReactNode;
+export type IconProps = { height?: number | string; width?: number | string; className?: string; };
 export interface PluginDef {
     name: string;
     description: string;
@@ -151,18 +156,25 @@ export interface PluginDef {
     /**
      * Allows you to subscribe to Flux events
      */
-    flux?: {
-        [E in FluxEvents]?: (event: any) => void | Promise<void>;
-    };
+    flux?: Partial<{
+        [E in LiteralUnion<FluxEvents, string>]: (event: any) => void | Promise<void>;
+    }>;
     /**
      * Allows you to manipulate context menus
      */
     contextMenus?: Record<string, NavContextMenuPatchCallback>;
     /**
      * Allows you to add custom actions to the Vencord Toolbox.
-     * The key will be used as text for the button
+     *
+     * Can either be an object mapping labels to action functions or a Function returning Menu components.
+     * Please note that you can only use Menu components.
+     *
+     * @example
+     * toolboxActions: {
+     *   "Click Me": () => alert("Hi")
+     * }
      */
-    toolboxActions?: Record<string, () => void>;
+    toolboxActions?: Record<string, () => void> | (() => ReactNode);
 
     tags?: string[];
 
@@ -174,18 +186,37 @@ export interface PluginDef {
     userProfileBadge?: ProfileBadge;
     userProfileBadges?: ProfileBadge[];
 
+    messagePopoverButton?: MessagePopoverButtonData;
+    chatBarButton?: ChatBarButtonData;
+
     onMessageClick?: MessageClickListener;
     onBeforeMessageSend?: MessageSendListener;
     onBeforeMessageEdit?: MessageEditListener;
 
-    renderMessagePopoverButton?: MessagePopoverButtonFactory;
     renderMessageAccessory?: MessageAccessoryFactory;
     renderMessageDecoration?: MessageDecorationFactory;
 
     renderMemberListDecorator?: MemberListDecoratorFactory;
-    renderNicknameIcon?: NicknameIconFactory;
 
+    // Custom
+    renderNicknameIcon?: NicknameIconFactory;
+    renderHeaderBarButton?: HeaderBarButtonFactory;
+    audioProcessor?: AudioProcessor;
+
+    // TODO: Remove eventually
+    /**
+     * @deprecated Use {@link chatBarButton} instead
+     */
     renderChatBarButton?: ChatBarButtonFactory;
+    /**
+     * @deprecated Use {@link messagePopoverButton} instead
+     */
+    renderMessagePopoverButton?: MessagePopoverButtonFactory;
+
+    /**
+     * A Vencord plugin that is modified for extra features in Equicord
+     */
+    isModified?: boolean;
 }
 
 export const enum StartAt {
@@ -415,3 +446,5 @@ export type PluginNative<PluginExports extends Record<string, (event: Electron.I
     ? (...args: Args) => Return extends Promise<any> ? Return : Promise<Return>
     : never;
 };
+
+export type AllOrNothing<T> = T | { [K in keyof T]?: never; };

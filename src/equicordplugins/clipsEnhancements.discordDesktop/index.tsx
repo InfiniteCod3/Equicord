@@ -53,17 +53,17 @@ export default definePlugin({
             find: "clips_recording_settings",
             replacement: [
                 {
-                    match: /\[\{.{0,10}\i.\i.FPS_15.{0,250}\}\]/,
+                    match: /\[\{.{0,25}\i.\i.FPS_15.{0,500}\}\]/,
                     replace: "$self.patchFramerates($&)"
                 },
                 {
-                    match: /\[\{.{0,10}\i.\i.SECONDS_30.{0,250}\}\]/,
+                    match: /\[\{.{0,25}\i.\i.SECONDS_30.{0,500}\}\]/,
                     replace: "$self.patchTimeslots($&)"
                 },
             ]
         },
         {
-            find: "clipMethod:\"manual\"",
+            find: "#{intl::CLIPS_UNKNOWN_SOURCE}",
             replacement: {
                 match: /(applicationName:)(.{0,50})(,applicationId:)(\i)/,
                 replace: "$1$2$3$self.getApplicationId($2)??$4"

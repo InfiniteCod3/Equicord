@@ -1,9 +1,11 @@
 .vc-donate-button {
     overflow: visible !important;
+    color: black;
 }
 
 .vc-donate-button .vc-heart-icon {
     transition: transform 0.3s;
+    margin-right: 0.5em;
 }
 
 .vc-donate-button:hover .vc-heart-icon {

@@ -17,19 +17,25 @@
 */
 
 import { useSettings } from "@api/Settings";
+import { Button } from "@components/Button";
+import { Divider } from "@components/Divider";
 import { ErrorCard } from "@components/ErrorCard";
 import { Flex } from "@components/Flex";
+import { FormSwitch } from "@components/FormSwitch";
+import { Heading } from "@components/Heading";
 import { Link } from "@components/Link";
-import { handleSettingsTabError, SettingsTab, wrapTab } from "@components/settings";
+import { Paragraph } from "@components/Paragraph";
+import { SettingsTab, wrapTab } from "@components/settings";
 import { Margins } from "@utils/margins";
 import { classes } from "@utils/misc";
-import { ModalCloseButton, ModalContent, ModalProps, ModalRoot, ModalSize, openModal } from "@utils/modal";
 import { relaunch } from "@utils/native";
 import { useAwaiter } from "@utils/react";
-import { changes, checkForUpdates, getRepo, isNewer, shortGitHash, update, updateError, UpdateLogger } from "@utils/updater";
-import { Alerts, Button, Card, Forms, Parser, React, Switch, Toasts } from "@webpack/common";
+import { changes, checkForUpdates, getRepo, isNewer, update, updateError, UpdateLogger } from "@utils/updater";
+import { Alerts, Parser, React, Toasts } from "@webpack/common";
 
 import gitHash from "~git-hash";
+
+import { Changes, HashLink } from "./Components";
 
 function withDispatcher(dispatcher: React.Dispatch<React.SetStateAction<boolean>>, action: () => any) {
     return async () => {
@@ -76,31 +82,6 @@ interface CommonProps {
     repoPending: boolean;
 }
 
-function HashLink({ repo, hash, disabled = false, longHash = hash }: { repo: string, hash: string, disabled?: boolean; longHash?: string; }) {
-    return <Link href={`${repo}/commit/${longHash}`} disabled={disabled}>
-        {hash}
-    </Link>;
-}
-
-function Changes({ updates, repo, repoPending }: CommonProps & { updates: typeof changes; }) {
-    return (
-        <Card style={{ padding: "0 0.5em" }}>
-            {updates.map(({ hash, author, message }) => (
-                <div key={hash} style={{
-                    marginTop: "0.5em",
-                    marginBottom: "0.5em"
-                }}>
-                    <code><HashLink {...{ repo, hash }} disabled={repoPending} /></code>
-                    <span style={{
-                        marginLeft: "0.5em",
-                        color: "var(--text-default)"
-                    }}>{message} - {author}</span>
-                </div>
-            ))}
-        </Card>
-    );
-}
-
 function Updatable(props: CommonProps) {
     const [updates, setUpdates] = React.useState(changes);
     const [isChecking, setIsChecking] = React.useState(false);
@@ -111,7 +92,7 @@ function Updatable(props: CommonProps) {
         <>
             <Flex className={classes(Margins.bottom8, Margins.top8)}>
                 {isOutdated && <Button
-                    size={Button.Sizes.SMALL}
+                    size="small"
                     disabled={isUpdating || isChecking}
                     onClick={withDispatcher(setIsUpdating, async () => {
                         if (await update()) {
@@ -135,7 +116,7 @@ function Updatable(props: CommonProps) {
                     Update Now
                 </Button>}
                 <Button
-                    size={Button.Sizes.SMALL}
+                    size="small"
                     disabled={isUpdating || isChecking}
                     onClick={withDispatcher(setIsChecking, async () => {
                         const outdated = await checkForUpdates();
@@ -159,15 +140,15 @@ function Updatable(props: CommonProps) {
             </Flex>
             {!updates && updateError ? (
                 <>
-                    <Forms.FormText>Failed to check updates. Check the console for more info</Forms.FormText>
+                    <Paragraph>Failed to check updates. Check the console for more info</Paragraph>
                     <ErrorCard style={{ padding: "1em" }}>
                         <p>{updateError.stderr || updateError.stdout || "An unknown error occurred"}</p>
                     </ErrorCard>
                 </>
             ) : (
-                <Forms.FormText className={Margins.bottom8}>
+                <Paragraph className={Margins.bottom8}>
                     {isOutdated ? (updates.length === 1 ? "There is 1 Update" : `There are ${updates.length} Updates`) : "Up to Date!"}
-                </Forms.FormText>
+                </Paragraph>
             )}
 
             {isOutdated && <Changes updates={updates} {...props} />}
@@ -178,9 +159,9 @@ function Updatable(props: CommonProps) {
 function Newer(props: CommonProps) {
     return (
         <>
-            <Forms.FormText className={Margins.bottom8}>
+            <Paragraph className={Margins.bottom8}>
                 Your local copy has more recent commits. Please stash or reset them.
-            </Forms.FormText>
+            </Paragraph>
             <Changes {...props} updates={changes} />
         </>
     );
@@ -203,26 +184,24 @@ function Updater() {
 
     return (
         <SettingsTab title="Equicord Updater">
-            <Forms.FormTitle tag="h5">Updater Settings</Forms.FormTitle>
-            <Switch
+            <Heading>Updater Settings</Heading>
+            <FormSwitch
+                title="Automatically update"
+                description="Automatically update Equicord without confirmation prompt"
                 value={settings.autoUpdate}
                 onChange={(v: boolean) => settings.autoUpdate = v}
-                note="Automatically update Equicord without confirmation prompt"
-            >
-                Automatically update
-            </Switch>
-            <Switch
+            />
+            <FormSwitch
                 value={settings.autoUpdateNotification}
                 onChange={(v: boolean) => settings.autoUpdateNotification = v}
-                note="Shows a notification when Equicord automatically updates"
+                title="Get notified when an automatic update completes"
+                description="Shows a notification when Equicord automatically updates"
                 disabled={!settings.autoUpdate}
-            >
-                Get notified when an automatic update completes
-            </Switch>
+            />
 
-            <Forms.FormTitle tag="h5">Repo</Forms.FormTitle>
+            <Heading>Repo</Heading>
 
-            <Forms.FormText>
+            <Paragraph>
                 {repoPending
                     ? repo
                     : err
@@ -233,33 +212,18 @@ function Updater() {
                             </Link>
                         )
                 }
-                {" "}(<HashLink hash={shortGitHash()} repo={repo} disabled={repoPending} longHash={gitHash} />)
-            </Forms.FormText>
+                {" "}(<HashLink hash={gitHash} repo={repo} disabled={repoPending} />)
+            </Paragraph>
 
-            <Forms.FormDivider className={Margins.top8 + " " + Margins.bottom8} />
+            <Divider className={Margins.top8 + " " + Margins.bottom8} />
 
-            <Forms.FormTitle tag="h5">Updates</Forms.FormTitle>
+            <Heading>Updates</Heading>
 
             {isNewer ? <Newer {...commonProps} /> : <Updatable {...commonProps} />}
         </SettingsTab >
     );
 }
 
-export default IS_UPDATER_DISABLED ? null : wrapTab(Updater, "Updater");
-
-export const openUpdaterModal = IS_UPDATER_DISABLED ? null : function () {
-    const UpdaterTab = wrapTab(Updater, "Updater");
-
-    try {
-        openModal(wrapTab((modalProps: ModalProps) => (
-            <ModalRoot {...modalProps} size={ModalSize.MEDIUM}>
-                <ModalContent className="vc-updater-modal">
-                    <ModalCloseButton onClick={modalProps.onClose} className="vc-updater-modal-close-button" />
-                    <UpdaterTab />
-                </ModalContent>
-            </ModalRoot>
-        ), "UpdaterModal"));
-    } catch {
-        handleSettingsTabError();
-    }
-};
+export default IS_UPDATER_DISABLED
+    ? null
+    : wrapTab(Updater, "Updater");

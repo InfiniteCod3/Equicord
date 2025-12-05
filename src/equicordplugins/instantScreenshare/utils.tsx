@@ -5,10 +5,12 @@
  */
 
 import { definePluginSettings } from "@api/Settings";
+import { Heading } from "@components/Heading";
+import { Paragraph } from "@components/Paragraph";
 import { Logger } from "@utils/Logger";
 import { OptionType } from "@utils/types";
-import { findByCodeLazy } from "@webpack";
-import { Forms, MediaEngineStore, SearchableSelect, useEffect, useState } from "@webpack/common";
+import { findByCodeLazy, findByPropsLazy } from "@webpack";
+import { MediaEngineStore, SearchableSelect, useEffect, useState } from "@webpack/common";
 
 interface PickerProps {
     streamMediaSelection: any[];
@@ -16,26 +18,59 @@ interface PickerProps {
 }
 
 const getDesktopSources = findByCodeLazy("desktop sources");
+const configModule = findByPropsLazy("getOutputVolume");
+const log = new Logger("InstantScreenShare");
 
 export const settings = definePluginSettings({
     streamMedia: {
         type: OptionType.COMPONENT,
         component: SettingSection,
     },
+    includeVideoDevices: {
+        type: OptionType.BOOLEAN,
+        description: "Include video input devices (cameras, capture cards) in the source list",
+        default: false,
+    },
+    autoMute: {
+        type: OptionType.BOOLEAN,
+        description: "Automatically mute your microphone when joining a voice channel",
+        default: false,
+    },
+    autoDeafen: {
+        type: OptionType.BOOLEAN,
+        description: "Automatically deafen when joining a voice channel (also mutes you)",
+        default: false,
+    },
+    toolboxManagement: {
+        type: OptionType.BOOLEAN,
+        description: "Enable/Disable Instant Screenshare",
+        default: true,
+        hidden: true,
+    }
 });
 
 export async function getCurrentMedia() {
     const media = MediaEngineStore.getMediaEngine();
-    const sources = [
-        ...(await getDesktopSources(media, ["screen"], null) ?? []),
-        ...(await getDesktopSources(media, ["window", "application"], null) ?? [])
-    ];
-    const streamMedia = sources.find(screen => screen.id === settings.store.streamMedia);
-    console.log(sources);
+    const sources = await getDesktopSources(media, ["screen", "window"], null) ?? [];
 
+    if (settings.store.includeVideoDevices) {
+        try {
+            const videoDevices = Object.values(configModule.getVideoDevices() || {});
+            const videoSources = videoDevices.map((device: any) => ({
+                id: device.id,
+                name: device.name,
+                type: "video_device"
+            }));
+            sources.push(...videoSources);
+        } catch (e) {
+            new log.warn("Failed to get video devices:", e);
+        }
+    }
+
+    const streamMedia = sources.find(screen => screen.id === settings.store.streamMedia);
     if (streamMedia) return streamMedia;
 
-    new Logger("InstantScreenShare").error(`Stream Media "${settings.store.streamMedia}" not found. Resetting to default.`);
+    log.error(`Stream Media "${settings.store.streamMedia}" not found. Resetting to default.`);
 
     settings.store.streamMedia = sources[0];
     return sources[0];
@@ -61,7 +96,7 @@ function StreamSimplePicker({ streamMediaSelection, streamMedia }: PickerProps) 
 }
 
 function ScreenSetting() {
-    const { streamMedia } = settings.use(["streamMedia"]);
+    const { streamMedia, includeVideoDevices } = settings.use(["streamMedia", "includeVideoDevices"]);
     const media = MediaEngineStore.getMediaEngine();
     const [streamMediaSelection, setStreamMediaSelection] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
@@ -70,10 +105,21 @@ function ScreenSetting() {
         let active = true;
         async function fetchMedia() {
             setLoading(true);
-            const sources = [
-                ...(await getDesktopSources(media, ["screen"], null) ?? []),
-                ...(await getDesktopSources(media, ["window", "application"], null) ?? [])
-            ];
+            const sources = await getDesktopSources(media, ["screen", "window"], null) ?? [];
+
+            if (includeVideoDevices) {
+                try {
+                    const videoDevices = Object.values(configModule.getVideoDevices() || {});
+                    const videoSources = videoDevices.map((device: any) => ({
+                        id: device.id,
+                        name: device.name,
+                        type: "video_device"
+                    }));
+                    sources.push(...videoSources);
+                } catch (e) {
+                    log.warn("Failed to get video devices:", e);
+                }
+            }
 
             if (active) {
                 setStreamMediaSelection(sources);
@@ -82,20 +128,20 @@ function ScreenSetting() {
         }
         fetchMedia();
         return () => { active = false; };
-    }, []);
+    }, [includeVideoDevices]);
 
-    if (loading) return <Forms.FormText>Loading media sources...</Forms.FormText>;
-    if (!streamMediaSelection.length) return <Forms.FormText>No Media found.</Forms.FormText>;
+    if (loading) return <Paragraph>Loading media sources...</Paragraph>;
+    if (!streamMediaSelection.length) return <Paragraph>No Media found.</Paragraph>;
 
     return <StreamSimplePicker streamMediaSelection={streamMediaSelection} streamMedia={streamMedia} />;
 }
 
 function SettingSection() {
     return (
-        <Forms.FormSection>
-            <Forms.FormTitle>Media source to stream</Forms.FormTitle>
-            <Forms.FormText>Resets to main screen if not found</Forms.FormText>
+        <section>
+            <Heading>Media source to stream</Heading>
+            <Paragraph>Resets to main screen if not found</Paragraph>
             <ScreenSetting />
-        </Forms.FormSection>
+        </section>
     );
 }

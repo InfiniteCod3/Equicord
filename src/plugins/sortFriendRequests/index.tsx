@@ -20,11 +20,13 @@ import "./styles.css";
 
 import { definePluginSettings, migratePluginSettings } from "@api/Settings";
 import { classNameFactory } from "@api/Styles";
+import { BaseText } from "@components/BaseText";
 import ErrorBoundary from "@components/ErrorBoundary";
+import { Flex } from "@components/Flex";
 import { Devs, EquicordDevs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
 import { User } from "@vencord/discord-types";
-import { DateUtils, Flex, RelationshipStore, Text, TooltipContainer } from "@webpack/common";
+import { DateUtils, RelationshipStore, TooltipContainer } from "@webpack/common";
 import { PropsWithChildren } from "react";
 
 const formatter = new Intl.DateTimeFormat(undefined, {
@@ -53,6 +55,7 @@ export default definePlugin({
     name: "SortFriends",
     authors: [Devs.Megu, EquicordDevs.CallMeGii],
     description: "Sorts friend requests by date of receipt",
+    isModified: true,
     settings,
 
     patches: [
@@ -131,7 +134,7 @@ export default definePlugin({
             {children}
             {!isNaN(since.getTime()) && (
                 <TooltipContainer text={DateUtils.dateFormat(since, "LLLL")} tooltipClassName={cl("tooltip")}>
-                    <Text variant="text-xs/normal" className={cl("date")}>{formatter.format(since)}</Text>
+                    <BaseText size="xs" className={cl("date")}>{formatter.format(since)}</BaseText>
                 </TooltipContainer>
             )}
         </div>;

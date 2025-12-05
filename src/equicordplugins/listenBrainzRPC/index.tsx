@@ -5,14 +5,16 @@
  */
 
 import { definePluginSettings } from "@api/Settings";
+import { HeadingSecondary } from "@components/Heading";
 import { Link } from "@components/Link";
+import { Paragraph } from "@components/Paragraph";
 import { EquicordDevs } from "@utils/constants";
 import { Logger } from "@utils/Logger";
 import definePlugin, { OptionType } from "@utils/types";
 import { Activity, ActivityAssets, ActivityButton } from "@vencord/discord-types";
 import { ActivityFlags, ActivityType } from "@vencord/discord-types/enums";
 import { findByPropsLazy } from "@webpack";
-import { ApplicationAssetUtils, FluxDispatcher, Forms } from "@webpack/common";
+import { ApplicationAssetUtils, FluxDispatcher } from "@webpack/common";
 
 interface TrackData {
     name: string;
@@ -39,6 +41,8 @@ const placeholderId = "2a96cbd8b46e442fc41c2b86b821562f";
 const logger = new Logger("ListenBrainzRPC");
 
 const PresenceStore = findByPropsLazy("getLocalPresence");
+
+let updateInterval: NodeJS.Timeout | undefined;
 
 async function getApplicationAsset(key: string): Promise<string> {
     return (await ApplicationAssetUtils.fetchAssetIds(applicationId, [key]))[0];
@@ -163,15 +167,15 @@ export default definePlugin({
 
     settingsAboutComponent: () => (
         <>
-            <Forms.FormTitle tag="h3">About MusicBrainz API</Forms.FormTitle>
-            <Forms.FormText>
+            <HeadingSecondary>About MusicBrainz API</HeadingSecondary>
+            <Paragraph>
                 The MusicBrainz API does not require an API key, but it does require a{" "}
                 <Link href="https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting#Provide_meaningful_User-Agent_strings">
                     {" "}
                     meaningful user-agent string
                 </Link>{" "}
                 . For most, an email address should suffice.
-            </Forms.FormText>
+            </Paragraph>
         </>
     ),
 
@@ -179,13 +183,14 @@ export default definePlugin({
 
     start() {
         this.updatePresence();
-        this.updateInterval = setInterval(() => {
+        updateInterval = setInterval(() => {
             this.updatePresence();
         }, 16000);
     },
 
     stop() {
-        clearInterval(this.updateInterval);
+        clearInterval(updateInterval);
+        updateInterval = undefined;
     },
 
     async fetchTrackData(): Promise<TrackData | null> {

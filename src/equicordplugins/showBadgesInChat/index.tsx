@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { addMessageDecoration, removeMessageDecoration } from "@api/MessageDecorations";
 import { Devs, EquicordDevs } from "@utils/constants";
 import { isEquicordPluginDev, isPluginDev } from "@utils/misc";
 import definePlugin from "@utils/types";
@@ -38,18 +37,15 @@ function CheckBadge({ badge, author }: { badge: string; author: User; }): JSX.El
 
     switch (badge) {
         case "EquicordDonor":
-            const equicordDonorBadges = badges.getEquicordDonorBadges(author.id)?.slice(0, 12);
-            if (!equicordDonorBadges || equicordDonorBadges.length === 0) return null;
-
             return (
                 <span style={{ order: settings.store.EquicordDonorPosition }}>
-                    {equicordDonorBadges.map((badge: any) => (
+                    {badges.getEquicordDonorBadges(author.id)?.map(badge => (
                         <RoleIconComponent
                             key={author.id}
                             className={roleIconClassName}
                             name={badge.description}
                             size={20}
-                            src={badge.image}
+                            src={badge.iconSrc}
                         />
                     ))}
                 </span>
@@ -61,7 +57,7 @@ function CheckBadge({ badge, author }: { badge: string; author: User; }): JSX.El
                         className={roleIconClassName}
                         name="Equicord Contributor"
                         size={20}
-                        src={"https://i.imgur.com/57ATLZu.png"}
+                        src={"https://equicord.org/assets/favicon.png"}
                     />
                 </span>
             ) : null;
@@ -74,7 +70,7 @@ function CheckBadge({ badge, author }: { badge: string; author: User; }): JSX.El
                             className={roleIconClassName}
                             name={badge.description}
                             size={20}
-                            src={badge.image}
+                            src={badge.iconSrc}
                         />
                     ))}
                 </span>
@@ -145,12 +141,8 @@ export default definePlugin({
     name: "ShowBadgesInChat",
     authors: [Devs.Inbestigator, EquicordDevs.KrystalSkull],
     description: "Shows the message author's badges beside their name in chat.",
-    dependencies: ["MessageDecorationsAPI"],
     settings,
-    start: () => {
-        addMessageDecoration("vc-show-badges-in-chat", props => props.message?.author ? <ChatBadges author={props.message.author} /> : null);
-    },
-    stop: () => {
-        removeMessageDecoration("vc-show-badges-in-chat");
+    renderMessageDecoration(props) {
+        return props.message?.author ? <ChatBadges author={props.message.author} /> : null;
     }
 });

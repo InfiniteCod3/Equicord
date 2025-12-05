@@ -34,7 +34,7 @@ export let MessageStore: Omit<t.MessageStore, "getMessages"> & GenericStore & {
 export let PermissionStore: GenericStore;
 export let GuildChannelStore: GenericStore;
 export let ReadStateStore: GenericStore;
-export let PresenceStore: GenericStore;
+export let PresenceStore: t.PresenceStore;
 
 export let GuildStore: t.GuildStore;
 export let GuildRoleStore: t.GuildRoleStore;
@@ -57,6 +57,7 @@ export let ThemeStore: t.ThemeStore;
 export let WindowStore: t.WindowStore;
 export let DraftStore: t.DraftStore;
 export let StreamerModeStore: t.StreamerModeStore;
+export let OverridePremiumTypeStore: GenericStore;
 
 /**
  * @see jsdoc of {@link t.useStateFromStores}
@@ -88,8 +89,10 @@ waitForStore("StickersStore", m => StickersStore = m);
 waitForStore("TypingStore", m => TypingStore = m);
 waitForStore("VoiceStateStore", m => VoiceStateStore = m);
 waitForStore("StreamerModeStore", m => StreamerModeStore = m);
+waitForStore("OverridePremiumTypeStore", m => OverridePremiumTypeStore = m);
 waitForStore("ThemeStore", m => {
     ThemeStore = m;
-    // Importing this directly can easily cause circular imports. For this reason, use a non import access here.
-    Vencord.QuickCss.initQuickCssThemeStore();
+    // Importing this directly causes all webpack commons to be imported, which can easily cause circular dependencies.
+    // For this reason, use a non import access here.
+    Vencord.Api.Themes.initQuickCssThemeStore(m);
 });

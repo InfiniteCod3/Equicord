@@ -18,12 +18,14 @@
 
 import "./ytmStyles.css";
 
+import { BaseText } from "@components/BaseText";
+import { Flex } from "@components/Flex";
 import { ImageIcon, LinkIcon, OpenExternalIcon } from "@components/Icons";
 import { SeekBar } from "@equicordplugins/musicControls/spotify/SeekBar";
 import { debounce } from "@shared/debounce";
-import { openImageModal } from "@utils/discord";
-import { classes, copyWithToast } from "@utils/misc";
-import { ContextMenuApi, Flex, FluxDispatcher, Forms, Menu, React, useEffect, useState, useStateFromStores } from "@webpack/common";
+import { copyWithToast, openImageModal } from "@utils/discord";
+import { classes } from "@utils/misc";
+import { ContextMenuApi, FluxDispatcher, Menu, React, useEffect, useState, useStateFromStores } from "@webpack/common";
 
 import { type Repeat, type Song, YoutubeMusicStore } from "./YtmStore";
 
@@ -127,7 +129,7 @@ function Controls() {
     return (
         <Flex className={cl("button-row")} style={{ gap: 0 }}>
             <Button
-                className={classes(cl("button"), isShuffled ? cl("shuffle-on") : cl("shuffle-off"))}
+                className={classes(cl("button"), cl("shuffle"), isShuffled ? cl("shuffle-on") : cl("shuffle-off"))}
                 onClick={() => YoutubeMusicStore.shuffle()}
             >
                 <Shuffle />
@@ -179,13 +181,14 @@ function YtmSeekBar() {
 
     return (
         <div id={cl("progress-bar")}>
-            <Forms.FormText
-                variant="text-xs/medium"
+            <BaseText
+                size="xs"
+                weight="medium"
                 className={`${cl("progress-time")} ${cl("time-left")}`}
                 aria-label="Progress"
             >
                 {msToHuman(position)}
-            </Forms.FormText>
+            </BaseText>
             <SeekBar
                 initialValue={position}
                 minValue={0}
@@ -194,13 +197,14 @@ function YtmSeekBar() {
                 asValueChanges={onChange}
                 onValueRender={msToHuman}
             />
-            <Forms.FormText
-                variant="text-xs/medium"
+            <BaseText
+                size="xs"
+                weight="medium"
                 className={`${cl("progress-time")} ${cl("time-right")}`}
                 aria-label="Total Duration"
             >
                 {msToHuman(songDuration * 1000)}
-            </Forms.FormText>
+            </BaseText>
         </div>
     );
 }
@@ -296,25 +300,26 @@ function Info({ track }: { track: NonNullable<Song>; }) {
         <div id={cl("info-wrapper")}>
             {i}
             <div id={cl("titles")}>
-                <Forms.FormText
-                    variant="text-sm/semibold"
+                <BaseText
+                    size="sm"
+                    weight="semibold"
                     id={cl("song-title")}
                     className={cl("ellipoverflow")}
                     title={track?.title}
                     {...makeLinkProps("Song", track?.videoId, `/watch?v=${track?.videoId}`)}
                 >
                     {track?.title}
-                </Forms.FormText>
+                </BaseText>
                 {track.artist && (
-                    <Forms.FormText variant="text-sm/normal" className={cl("ellipoverflow")}>
+                    <BaseText size="sm" className={cl("ellipoverflow")}>
                         by&nbsp;
                         <span className={cl("artist")} style={{ fontSize: "inherit" }} title={track.artist}>
                             {track.artist}
                         </span>
-                    </Forms.FormText>
+                    </BaseText>
                 )}
                 {track.album && (
-                    <Forms.FormText variant="text-sm/normal" className={cl("ellipoverflow")}>
+                    <BaseText size="sm" className={cl("ellipoverflow")}>
                         on&nbsp;
                         <span
                             id={cl("album-title")}
@@ -324,7 +329,7 @@ function Info({ track }: { track: NonNullable<Song>; }) {
                         >
                             {track.album}
                         </span>
-                    </Forms.FormText>
+                    </BaseText>
                 )}
             </div>
         </div>

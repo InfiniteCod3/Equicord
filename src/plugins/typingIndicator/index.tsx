@@ -20,13 +20,12 @@ import "./style.css";
 
 import { definePluginSettings, Settings } from "@api/Settings";
 import ErrorBoundary from "@components/ErrorBoundary";
+import { buildSeveralUsers } from "@plugins/typingTweaks";
 import { Devs } from "@utils/constants";
 import { getIntlMessage } from "@utils/discord";
 import definePlugin, { OptionType } from "@utils/types";
 import { findComponentByCodeLazy, findStoreLazy } from "@webpack";
 import { GuildMemberStore, RelationshipStore, SelectedChannelStore, Tooltip, TypingStore, UserStore, UserSummaryItem, useStateFromStores } from "@webpack/common";
-
-import { buildSeveralUsers } from "../typingTweaks";
 
 const ThreeDots = findComponentByCodeLazy(".dots,", "dotRadius:");
 const UserGuildSettingsStore = findStoreLazy("UserGuildSettingsStore");
@@ -170,6 +169,7 @@ export default definePlugin({
     name: "TypingIndicator",
     description: "Adds an indicator if someone is typing on a channel.",
     authors: [Devs.Nuckyz, Devs.fawn, Devs.Sqaaakoi],
+    isModified: true,
     settings,
 
     patches: [

@@ -6,14 +6,21 @@
 
 import "./styles.css";
 
+import { Button } from "@components/Button";
+import { Card } from "@components/Card";
+import { Divider } from "@components/Divider";
 import { ErrorCard } from "@components/ErrorCard";
+import { Heading } from "@components/Heading";
 import { DeleteIcon } from "@components/Icons";
 import { Link } from "@components/Link";
+import { Paragraph } from "@components/Paragraph";
 import { SettingsTab, wrapTab } from "@components/settings/tabs/BaseTab";
+import { HashLink } from "@components/settings/tabs/updater/Components";
+import { gitHashShort } from "@shared/vencordUserAgent";
 import { Margins } from "@utils/margins";
 import { useAwaiter } from "@utils/react";
-import { getRepo, shortGitHash, UpdateLogger } from "@utils/updater";
-import { Alerts, Button, Card, Forms, React, Toasts } from "@webpack/common";
+import { getRepo, UpdateLogger } from "@utils/updater";
+import { Alerts, React, Toasts } from "@webpack/common";
 
 import gitHash from "~git-hash";
 
@@ -24,31 +31,18 @@ import {
     clearIndividualLog,
     formatTimestamp,
     getChangelogHistory,
+    getCommitsSinceLastSeen,
     getLastRepositoryCheckHash,
     getNewPlugins,
     getNewSettings,
+    getNewSettingsEntries,
+    getNewSettingsSize,
     getUpdatedPlugins,
     initializeChangelog,
     saveUpdateSession,
     UpdateSession,
 } from "./changelogManager";
 import { NewPluginsCompact, NewPluginsSection } from "./NewPluginsSection";
-
-function HashLink({
-    repo,
-    hash,
-    disabled = false,
-}: {
-    repo: string;
-    hash: string;
-    disabled?: boolean;
-}) {
-    return (
-        <Link href={`${repo}/commit/${hash}`} disabled={disabled}>
-            {hash}
-        </Link>
-    );
-}
 
 function ChangelogCard({
     entry,
@@ -72,7 +66,7 @@ function ChangelogCard({
                     <code className="vc-changelog-entry-hash">
                         <HashLink
                             repo={repo}
-                            hash={entry.hash.slice(0, 7)}
+                            hash={entry.hash}
                             disabled={repoPending}
                         />
                     </code>
@@ -123,9 +117,8 @@ function UpdateLogCard({
                                 : `Update: ${log.fromHash.slice(0, 7)} → ${log.toHash.slice(0, 7)}`}
                         </span>
                         <Button
-                            size={Button.Sizes.NONE}
-                            color={Button.Colors.TRANSPARENT}
-                            look={Button.Looks.BLANK}
+                            size="min"
+                            variant="secondary"
                             className="vc-changelog-delete-button"
                             style={{
                                 padding: "4px",
@@ -154,8 +147,8 @@ function UpdateLogCard({
                         {log.updatedPlugins.length > 0 &&
                             ` • ${log.updatedPlugins.length} updated plugins`}
                         {log.newSettings &&
-                            log.newSettings.size > 0 &&
-                            ` • ${Array.from(log.newSettings.values()).reduce((sum, arr) => sum + arr.length, 0)} new settings`}
+                            getNewSettingsSize(log.newSettings) > 0 &&
+                            ` • ${getNewSettingsEntries(log.newSettings).reduce((sum, [, arr]) => sum + arr.length, 0)} new settings`}
                     </div>
                 </div>
                 <div
@@ -178,12 +171,9 @@ function UpdateLogCard({
 
                     {log.updatedPlugins.length > 0 && (
                         <div className="vc-changelog-log-plugins">
-                            <Forms.FormTitle
-                                tag="h6"
-                                className={Margins.bottom8}
-                            >
+                            <Heading className={Margins.bottom8}>
                                 Updated Plugins
-                            </Forms.FormTitle>
+                            </Heading>
                             <NewPluginsCompact
                                 newPlugins={log.updatedPlugins}
                                 maxDisplay={50}
@@ -191,31 +181,28 @@ function UpdateLogCard({
                         </div>
                     )}
 
-                    {log.newSettings && log.newSettings.size > 0 && (
-                        <div className="vc-changelog-log-plugins">
-                            <Forms.FormTitle
-                                tag="h6"
-                                className={Margins.bottom8}
-                            >
-                                New Settings
-                            </Forms.FormTitle>
-                            <div className="vc-changelog-new-plugins-list">
-                                {Array.from(
-                                    log.newSettings?.entries() || [],
-                                ).map(([pluginName, settings]) =>
-                                    settings.map(setting => (
-                                        <span
-                                            key={`${pluginName}-${setting}`}
-                                            className="vc-changelog-new-plugin-tag"
-                                            title={`New setting in ${pluginName}`}
-                                        >
-                                            {pluginName}.{setting}
-                                        </span>
-                                    )),
-                                )}
+                    {log.newSettings &&
+                        getNewSettingsSize(log.newSettings) > 0 && (
+                            <div className="vc-changelog-log-plugins">
+                                <Heading className={Margins.bottom8}>
+                                    New Settings
+                                </Heading>
+                                <div className="vc-changelog-new-plugins-list">
+                                    {getNewSettingsEntries(log.newSettings).map(
+                                        ([pluginName, settings]) =>
+                                            settings.map(setting => (
+                                                <span
+                                                    key={`${pluginName}-${setting}`}
+                                                    className="vc-changelog-new-plugin-tag"
+                                                    title={`New setting in ${pluginName}`}
+                                                >
+                                                    {pluginName}.{setting}
+                                                </span>
+                                            )),
+                                    )}
+                                </div>
                             </div>
-                        </div>
-                    )}
+                        )}
 
                     {log.commits.length > 0 && (
                         <div className="vc-changelog-log-commits">
@@ -293,6 +280,32 @@ function ChangelogContent() {
         }
     }, []);
 
+    const ensureLocalUpdateLogged = React.useCallback(async () => {
+        if (repoPending || repoErr) return false;
+        const repoUrl = repo;
+        if (!repoUrl) return false;
+
+        try {
+            const commits = await getCommitsSinceLastSeen(repoUrl);
+            if (commits.length === 0) return false;
+
+            const newPlgs = await getNewPlugins();
+            const updatedPlgs = await getUpdatedPlugins();
+            const newSettings = await getNewSettings();
+
+            await saveUpdateSession(commits, newPlgs, updatedPlgs, newSettings);
+
+            setChangelog(commits);
+            setNewPlugins(newPlgs);
+            setUpdatedPlugins(updatedPlgs);
+            await loadChangelogHistory();
+            return true;
+        } catch (err) {
+            console.error("Failed to log local update:", err);
+            return false;
+        }
+    }, [repo, repoErr, repoPending, loadChangelogHistory]);
+
     // check if the repository was recently refreshed
     React.useEffect(() => {
         const checkRecentStatus = async () => {
@@ -337,53 +350,66 @@ function ChangelogContent() {
             if (lastRepoCheck === currentRepoHash) {
                 setIsLoading(false);
                 setRecentlyChecked(true);
-                Toasts.show({
-                    message: "Already up to date with repository",
-                    id: Toasts.genId(),
-                    type: Toasts.Type.MESSAGE,
-                    options: {
-                        position: Toasts.Position.BOTTOM,
-                    },
-                });
+                const logged = await ensureLocalUpdateLogged();
+                if (!logged) {
+                    setChangelog([]);
+                    Toasts.show({
+                        message: "Already up to date with repository",
+                        id: Toasts.genId(),
+                        type: Toasts.Type.MESSAGE,
+                        options: {
+                            position: Toasts.Position.BOTTOM,
+                        },
+                    });
+                }
                 return;
             }
 
-
             if (updates.ok && updates.value) {
-                setChangelog(updates.value);
+                if (updates.value.length > 0) {
+                    setChangelog(updates.value);
 
-                // Load current new/updated plugins and settings
-                const newPlgs = await getNewPlugins();
-                const updatedPlgs = await getUpdatedPlugins();
-                const newSettings = await getNewSettings();
-                setNewPlugins(newPlgs);
-                setUpdatedPlugins(updatedPlgs);
+                    const newPlgs = await getNewPlugins();
+                    const updatedPlgs = await getUpdatedPlugins();
+                    const newSettings = await getNewSettings();
+                    setNewPlugins(newPlgs);
+                    setUpdatedPlugins(updatedPlgs);
 
-                // always save the current fetch session to history to track repo state
-                await saveUpdateSession(
-                    updates.value,
-                    newPlgs,
-                    updatedPlgs,
-                    newSettings,
-                    true, // forceLog = true for repository fetches
-                );
-                await loadChangelogHistory();
-                setRecentlyChecked(true);
+                    await saveUpdateSession(
+                        updates.value,
+                        newPlgs,
+                        updatedPlgs,
+                        newSettings,
+                        true,
+                    );
+                    await loadChangelogHistory();
+                    setRecentlyChecked(true);
 
-                Toasts.show({
-                    message:
-                        updates.value.length > 0
-                            ? `Found ${updates.value.length} commit${updates.value.length === 1 ? "" : "s"} from repository`
+                    Toasts.show({
+                        message: `Found ${updates.value.length} commit${updates.value.length === 1 ? "" : "s"} from repository`,
+                        id: Toasts.genId(),
+                        type: Toasts.Type.SUCCESS,
+                        options: {
+                            position: Toasts.Position.BOTTOM,
+                        },
+                    });
+                } else {
+                    const logged = await ensureLocalUpdateLogged();
+                    setRecentlyChecked(true);
+                    Toasts.show({
+                        message: logged
+                            ? "Logged commits from your latest update"
                             : "Repository is up to date with your local copy",
-                    id: Toasts.genId(),
-                    type:
-                        updates.value.length > 0
-                            ? Toasts.Type.SUCCESS
-                            : Toasts.Type.MESSAGE,
-                    options: {
-                        position: Toasts.Position.BOTTOM,
-                    },
-                });
+                        id: Toasts.genId(),
+                        type: logged ? Toasts.Type.SUCCESS : Toasts.Type.MESSAGE,
+                        options: {
+                            position: Toasts.Position.BOTTOM,
+                        },
+                    });
+                    if (!logged) {
+                        setChangelog([]);
+                    }
+                }
             } else if (!updates.ok) {
                 throw new Error(
                     updates.error?.message || "Failed to fetch from repository",
@@ -413,18 +439,27 @@ function ChangelogContent() {
     React.useEffect(() => {
         const loadInitialData = async () => {
             if (!repoPending && !repoErr) {
-                // load new plugins first, then fetch the commits
                 await loadNewPlugins();
-                await fetchChangelog();
+                const logged = await ensureLocalUpdateLogged();
+                if (!logged) {
+                    await fetchChangelog();
+                } else {
+                    setIsLoading(false);
+                }
             } else if (!repoPending) {
                 // perseverance
                 await loadNewPlugins();
                 setIsLoading(false);
             }
         };
-
         loadInitialData();
-    }, [repoPending, repoErr, fetchChangelog, loadNewPlugins]);
+    }, [
+        repoPending,
+        repoErr,
+        fetchChangelog,
+        loadNewPlugins,
+        ensureLocalUpdateLogged,
+    ]);
 
     const toggleLogExpanded = (logId: string) => {
         const newExpanded = new Set(expandedLogs);
@@ -443,13 +478,13 @@ function ChangelogContent() {
 
     return (
         <>
-            <Forms.FormText className={Margins.bottom16}>
+            <Paragraph className={Margins.bottom16}>
                 View the most recent changes to Equicord. This fetches commits
                 directly from the repository to show you what's new.
-            </Forms.FormText>
+            </Paragraph>
 
-            <Forms.FormTitle tag="h5">Repository</Forms.FormTitle>
-            <Forms.FormText className={Margins.bottom16}>
+            <Heading>Repository</Heading>
+            <Paragraph className={Margins.bottom16}>
                 {repoPending ? (
                     repo
                 ) : repoErr ? (
@@ -461,21 +496,17 @@ function ChangelogContent() {
                 )}{" "}
                 (Current:{" "}
                 <span className="vc-changelog-current-hash">
-                    {shortGitHash()}
+                    {gitHashShort}
                 </span>
                 )
-            </Forms.FormText>
+            </Paragraph>
 
             <div className="vc-changelog-controls">
                 <Button
-                    size={Button.Sizes.SMALL}
+                    size="small"
                     disabled={isLoading || repoPending || !!repoErr}
                     onClick={fetchChangelog}
-                    color={
-                        recentlyChecked
-                            ? Button.Colors.GREEN
-                            : Button.Colors.BRAND
-                    }
+                    variant={recentlyChecked ? "positive" : "primary"}
                 >
                     {isLoading
                         ? "Loading..."
@@ -487,20 +518,16 @@ function ChangelogContent() {
                 {changelogHistory.length > 0 && (
                     <>
                         <Button
-                            size={Button.Sizes.SMALL}
-                            color={
-                                showHistory
-                                    ? Button.Colors.PRIMARY
-                                    : Button.Colors.BRAND
-                            }
+                            size="small"
+                            variant={showHistory ? "primary" : "secondary"}
                             onClick={() => setShowHistory(!showHistory)}
                             style={{ marginLeft: "8px" }}
                         >
                             {showHistory ? "Hide Logs" : "Show Logs"}
                         </Button>
                         <Button
-                            size={Button.Sizes.SMALL}
-                            color={Button.Colors.RED}
+                            size="small"
+                            variant="dangerPrimary"
                             onClick={() => {
                                 Alerts.show({
                                     title: "Clear All Logs",
@@ -536,25 +563,25 @@ function ChangelogContent() {
             {error && (
                 <ErrorCard style={{ padding: "1em", marginBottom: "1em" }}>
                     <p>{error}</p>
-                    <Forms.FormText
+                    <Paragraph
                         style={{
                             marginTop: "0.5em",
                             color: "var(--text-muted)",
                         }}
                     >
                         Make sure you have an internet connection and try again.
-                    </Forms.FormText>
+                    </Paragraph>
                 </ErrorCard>
             )}
 
-            <Forms.FormDivider className={Margins.bottom16} />
+            <Divider className={Margins.bottom16} />
 
             {/* Current Changes Section */}
             {hasCurrentChanges ? (
                 <div className="vc-changelog-current">
-                    <Forms.FormTitle tag="h6" className={Margins.bottom8}>
+                    <Heading className={Margins.bottom8}>
                         Recent Changes
-                    </Forms.FormTitle>
+                    </Heading>
 
                     {/* New Plugins Section */}
                     {newPlugins.length > 0 && (
@@ -571,12 +598,9 @@ function ChangelogContent() {
                     {/* Updated Plugins Section */}
                     {updatedPlugins.length > 0 && (
                         <div className={Margins.bottom16}>
-                            <Forms.FormTitle
-                                tag="h6"
-                                className={Margins.bottom8}
-                            >
+                            <Heading className={Margins.bottom8}>
                                 Updated Plugins ({updatedPlugins.length})
-                            </Forms.FormTitle>
+                            </Heading>
                             <NewPluginsCompact newPlugins={updatedPlugins} />
                         </div>
                     )}
@@ -584,13 +608,10 @@ function ChangelogContent() {
                     {/* Code Changes */}
                     {changelog.length > 0 && (
                         <div>
-                            <Forms.FormTitle
-                                tag="h6"
-                                className={Margins.bottom8}
-                            >
+                            <Heading className={Margins.bottom8}>
                                 Code Changes ({changelog.length}{" "}
                                 {changelog.length === 1 ? "commit" : "commits"})
-                            </Forms.FormTitle>
+                            </Heading>
                             <div className="vc-changelog-commits-list">
                                 {changelog.map(entry => (
                                     <ChangelogCard
@@ -608,11 +629,11 @@ function ChangelogContent() {
                 !isLoading &&
                 !error && (
                     <Card className="vc-changelog-empty">
-                        <Forms.FormText>
+                        <Paragraph>
                             No commits available ahead of your current version.
                             Click "Fetch from Repository" to check for new
                             changes.
-                        </Forms.FormText>
+                        </Paragraph>
                     </Card>
                 )
             )}
@@ -620,18 +641,18 @@ function ChangelogContent() {
             {/* History Section */}
             {showHistory && changelogHistory.length > 0 && (
                 <div className="vc-changelog-history">
-                    <Forms.FormDivider
+                    <Divider
                         className={Margins.top16}
                         style={{ marginBottom: "1em" }}
                     />
-                    <Forms.FormTitle tag="h5" className={Margins.bottom8}>
+                    <Heading className={Margins.bottom8}>
                         Update Logs ({changelogHistory.length}{" "}
                         {changelogHistory.length === 1 ? "log" : "logs"})
-                    </Forms.FormTitle>
-                    <Forms.FormText className={Margins.bottom16}>
+                    </Heading>
+                    <Paragraph className={Margins.bottom16}>
                         Previous update sessions with their commit history and
                         plugin changes.
-                    </Forms.FormText>
+                    </Paragraph>
 
                     <div className="vc-changelog-history-list">
                         {changelogHistory.map(log => (
