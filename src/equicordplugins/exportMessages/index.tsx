@@ -195,6 +195,123 @@ async function fetchMessages(channelId: string, limit: number): Promise<Message[
     }
 }
 
+async function fetchMessagesAfter(channelId: string, afterId: string, limit: number): Promise<Message[]> {
+    const allMessages: Message[] = [];
+    let currentAfterId = afterId;
+
+    try {
+        while (allMessages.length < limit) {
+            const remaining = limit - allMessages.length;
+            const batchSize = Math.min(100, remaining);
+
+            try {
+                const response = await RestAPI.get({
+                    url: `/channels/${channelId}/messages`,
+                    query: {
+                        limit: batchSize,
+                        after: currentAfterId
+                    }
+                });
+
+                if (!response.body || !Array.isArray(response.body) || response.body.length === 0) {
+                    break;
+                }
+
+                allMessages.push(...response.body);
+
+                // For 'after', the API returns messages in chronological order (oldest to newest).
+                // So the last message in the body is the newest one we've seen.
+                currentAfterId = response.body[response.body.length - 1].id;
+
+                const delay = Math.min(200 + (allMessages.length / 100) * 50, 1000);
+                await new Promise(resolve => setTimeout(resolve, delay));
+
+            } catch (apiError) {
+                console.warn("API error during message fetch:", apiError);
+                if ((apiError as any)?.status === 429) {
+                    const retryAfter = ((apiError as any)?.body?.retry_after || 5) * 1000;
+                    console.log(`Rate limited, waiting ${retryAfter / 1000} seconds...`);
+                    await new Promise(resolve => setTimeout(resolve, retryAfter));
+                    continue;
+                }
+                console.error("Non-rate-limit API error:", apiError);
+                break;
+            }
+        }
+
+        return allMessages;
+
+    } catch (error) {
+        return [];
+    }
+}
+
+async function exportMessagesSince(message: Message, messageCount: number = 1000) {
+    try {
+        showNotification({
+            title: "Export Messages",
+            body: `Starting export of messages since ${message.id}...`,
+            icon: "⏳"
+        });
+
+        const messagesToExport = [message];
+        const newMessages = await fetchMessagesAfter(message.channel_id, message.id, messageCount);
+        messagesToExport.push(...newMessages);
+
+        const timestamp = new Date().toISOString().split("T")[0];
+        const filename = `messages-${message.channel_id}-since-${message.id}-${timestamp}.txt`;
+
+        const firstDate = new Date(message.timestamp.toString());
+        const lastMsg = messagesToExport[messagesToExport.length - 1];
+        const lastDate = new Date(lastMsg.timestamp.toString());
+
+        let content = `Exported ${messagesToExport.length} messages from channel\n`;
+        content += `Export date: ${new Date().toLocaleString()}\n`;
+        content += `Channel ID: ${message.channel_id}\n`;
+        content += `Start Message ID: ${message.id}\n`;
+        content += `Message time range: ${firstDate.toLocaleString()} -> ${lastDate.toLocaleString()}\n`;
+        content += "=".repeat(50) + "\n\n";
+
+        let processedCount = 0;
+        for (const msg of messagesToExport) {
+            try {
+                if (msg && msg.author) {
+                    content += formatMessage(msg, messagesToExport) + "\n\n";
+                    processedCount++;
+                }
+            } catch (error) {
+                content += "[Error: Could not format this message]\n\n";
+            }
+        }
+
+        if (IS_DISCORD_DESKTOP) {
+            const data = new TextEncoder().encode(content);
+            const result = await DiscordNative.fileManager.saveWithDialog(data, filename);
+
+            if (result && settings.store.openFileAfterExport) {
+                showItemInFolder(result);
+            }
+        } else {
+            const file = new File([content], filename, { type: "text/plain" });
+            saveFile(file);
+        }
+
+        showNotification({
+            title: "Export Messages",
+            body: `${processedCount} messages exported successfully`,
+            icon: "📄"
+        });
+
+    } catch (error) {
+        console.error(error);
+        showNotification({
+            title: "Export Messages",
+            body: "Failed to export messages",
+            icon: "❌"
+        });
+    }
+}
+
 async function exportMessages(channelId: string, messageCount: number, useClipboard: boolean = true) {
     try {
         if (!channelId) {
