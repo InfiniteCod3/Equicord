@@ -246,6 +246,165 @@ async function fetchMessagesAfter(channelId: string, afterId: string, limit: num
     }
 }
 
+async function fetchMessagesBetween(channelId: string, fromId: string, toId: string): Promise<Message[]> {
+    const allMessages: Message[] = [];
+    // Ensure fromId is the older message (smaller snowflake ID)
+    const [startId, endId] = BigInt(fromId) < BigInt(toId) ? [fromId, toId] : [toId, fromId];
+    let currentAfterId = startId;
+
+    try {
+        while (true) {
+            try {
+                const response = await RestAPI.get({
+                    url: `/channels/${channelId}/messages`,
+                    query: {
+                        limit: 100,
+                        after: currentAfterId
+                    }
+                });
+
+                if (!response.body || !Array.isArray(response.body) || response.body.length === 0) {
+                    break;
+                }
+
+                // Filter messages that are within our range (up to and including endId)
+                const messagesInRange = response.body.filter((msg: Message) =>
+                    BigInt(msg.id) <= BigInt(endId)
+                );
+
+                allMessages.push(...messagesInRange);
+
+                // Check if we've reached or passed the end message
+                const lastMessageId = response.body[response.body.length - 1].id;
+                if (BigInt(lastMessageId) >= BigInt(endId)) {
+                    break;
+                }
+
+                currentAfterId = lastMessageId;
+
+                const delay = Math.min(200 + (allMessages.length / 100) * 50, 1000);
+                await new Promise(resolve => setTimeout(resolve, delay));
+
+            } catch (apiError) {
+                console.warn("API error during message fetch:", apiError);
+                if ((apiError as any)?.status === 429) {
+                    const retryAfter = ((apiError as any)?.body?.retry_after || 5) * 1000;
+                    console.log(`Rate limited, waiting ${retryAfter / 1000} seconds...`);
+                    await new Promise(resolve => setTimeout(resolve, retryAfter));
+                    continue;
+                }
+                console.error("Non-rate-limit API error:", apiError);
+                break;
+            }
+        }
+
+        // Also fetch the starting message itself
+        try {
+            const startMsgResponse = await RestAPI.get({
+                url: `/channels/${channelId}/messages/${startId}`
+            });
+            if (startMsgResponse.body) {
+                allMessages.unshift(startMsgResponse.body);
+            }
+        } catch (e) {
+            console.warn("Could not fetch start message:", e);
+        }
+
+        // Sort by timestamp
+        allMessages.sort((a, b) => {
+            const timestampA = new Date(a.timestamp.toString()).getTime();
+            const timestampB = new Date(b.timestamp.toString()).getTime();
+            return timestampA - timestampB;
+        });
+
+        // Remove duplicates
+        const uniqueMessages = allMessages.filter((message, index, array) =>
+            array.findIndex(m => m.id === message.id) === index
+        );
+
+        return uniqueMessages;
+
+    } catch (error) {
+        console.error("Error fetching messages between IDs:", error);
+        return [];
+    }
+}
+
+async function exportMessagesRange(channelId: string, fromId: string, toId: string) {
+    try {
+        showNotification({
+            title: "Export Messages",
+            body: `Starting export of messages from ${fromId} to ${toId}...`,
+            icon: "⏳"
+        });
+
+        const messagesToExport = await fetchMessagesBetween(channelId, fromId, toId);
+
+        if (!messagesToExport || messagesToExport.length === 0) {
+            showNotification({
+                title: "Export Messages",
+                body: "No messages found in the specified range",
+                icon: "❌"
+            });
+            return;
+        }
+
+        const timestamp = new Date().toISOString().split("T")[0];
+        const filename = `messages-${channelId}-range-${timestamp}.txt`;
+
+        const firstMsg = messagesToExport[0];
+        const lastMsg = messagesToExport[messagesToExport.length - 1];
+        const firstDate = new Date(firstMsg.timestamp.toString());
+        const lastDate = new Date(lastMsg.timestamp.toString());
+
+        let content = `Exported ${messagesToExport.length} messages from channel\n`;
+        content += `Export date: ${new Date().toLocaleString()}\n`;
+        content += `Channel ID: ${channelId}\n`;
+        content += `From Message ID: ${fromId}\n`;
+        content += `To Message ID: ${toId}\n`;
+        content += `Message time range: ${firstDate.toLocaleString()} -> ${lastDate.toLocaleString()}\n`;
+        content += "=".repeat(50) + "\n\n";
+
+        let processedCount = 0;
+        for (const msg of messagesToExport) {
+            try {
+                if (msg && msg.author) {
+                    content += formatMessage(msg, messagesToExport) + "\n\n";
+                    processedCount++;
+                }
+            } catch (error) {
+                content += "[Error: Could not format this message]\n\n";
+            }
+        }
+
+        if (IS_DISCORD_DESKTOP) {
+            const data = new TextEncoder().encode(content);
+            const result = await DiscordNative.fileManager.saveWithDialog(data, filename);
+
+            if (result && settings.store.openFileAfterExport) {
+                showItemInFolder(result);
+            }
+        } else {
+            const file = new File([content], filename, { type: "text/plain" });
+            saveFile(file);
+        }
+
+        showNotification({
+            title: "Export Messages",
+            body: `${processedCount} messages exported successfully`,
+            icon: "📄"
+        });
+
+    } catch (error) {
+        console.error(error);
+        showNotification({
+            title: "Export Messages",
+            body: "Failed to export messages",
+            icon: "❌"
+        });
+    }
+}
+
 async function exportMessagesSince(message: Message, messageCount: number = 1000) {
     try {
         showNotification({
@@ -587,6 +746,49 @@ export default definePlugin({
                 }
 
                 exportMessages(ctx.channel.id, messageCount, useClipboard);
+            }
+        },
+        {
+            name: "exportrange",
+            description: "Export all messages between two message IDs",
+            inputType: ApplicationCommandInputType.BUILT_IN,
+            options: [
+                {
+                    name: "from",
+                    description: "Starting message ID (copy from message link or right-click -> Copy Message ID)",
+                    type: ApplicationCommandOptionType.STRING,
+                    required: true
+                },
+                {
+                    name: "to",
+                    description: "Ending message ID (copy from message link or right-click -> Copy Message ID)",
+                    type: ApplicationCommandOptionType.STRING,
+                    required: true
+                }
+            ],
+            execute: (args, ctx) => {
+                const fromId = args.find(a => a.name === "from")?.value as string;
+                const toId = args.find(a => a.name === "to")?.value as string;
+
+                if (!fromId || !toId) {
+                    showNotification({
+                        title: "Export Messages",
+                        body: "Both 'from' and 'to' message IDs are required",
+                        icon: "❌"
+                    });
+                    return;
+                }
+
+                if (!ctx.channel?.id) {
+                    showNotification({
+                        title: "Export Messages",
+                        body: "Could not determine channel ID",
+                        icon: "❌"
+                    });
+                    return;
+                }
+
+                exportMessagesRange(ctx.channel.id, fromId, toId);
             }
         }
     ],
