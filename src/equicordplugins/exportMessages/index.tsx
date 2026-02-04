@@ -329,7 +329,27 @@ async function fetchMessagesBetween(channelId: string, fromId: string, toId: str
     }
 }
 
-async function exportMessagesRange(channelId: string, fromId: string, toId: string) {
+function parseMessageInput(input: string): { messageId: string; channelId?: string; } | null {
+    const trimmed = input.trim();
+    if (/^\d{17,20}$/.test(trimmed)) {
+        return { messageId: trimmed };
+    }
+
+    const linkMatch = trimmed.match(
+        /^(?:https?:\/\/)?(?:canary\.|ptb\.)?discord(?:app)?\.com\/channels\/[^/]+\/(\d+)\/(\d+)$/
+    );
+
+    if (linkMatch) {
+        return {
+            channelId: linkMatch[1],
+            messageId: linkMatch[2]
+        };
+    }
+
+    return null;
+}
+
+async function exportMessagesRange(channelId: string, fromId: string, toId: string, useClipboard: boolean) {
     try {
         showNotification({
             title: "Export Messages",
@@ -376,7 +396,9 @@ async function exportMessagesRange(channelId: string, fromId: string, toId: stri
             }
         }
 
-        if (IS_DISCORD_DESKTOP) {
+        if (useClipboard) {
+            copyToClipboard(content);
+        } else if (IS_DISCORD_DESKTOP) {
             const data = new TextEncoder().encode(content);
             const result = await DiscordNative.fileManager.saveWithDialog(data, filename);
 
@@ -763,13 +785,22 @@ export default definePlugin({
                     description: "Ending message ID (copy from message link or right-click -> Copy Message ID)",
                     type: ApplicationCommandOptionType.STRING,
                     required: true
+                },
+                {
+                    name: "clipboard",
+                    description: "Copy messages to clipboard instead of saving to file (default: true)",
+                    type: ApplicationCommandOptionType.BOOLEAN,
+                    required: false
                 }
             ],
             execute: (args, ctx) => {
-                const fromId = args.find(a => a.name === "from")?.value as string;
-                const toId = args.find(a => a.name === "to")?.value as string;
+                const fromInput = args.find(a => a.name === "from")?.value as string;
+                const toInput = args.find(a => a.name === "to")?.value as string;
+                const useClipboard = args.find(a => a.name === "clipboard")?.value !== undefined
+                    ? Boolean(args.find(a => a.name === "clipboard")?.value)
+                    : true;
 
-                if (!fromId || !toId) {
+                if (!fromInput || !toInput) {
                     showNotification({
                         title: "Export Messages",
                         body: "Both 'from' and 'to' message IDs are required",
@@ -787,7 +818,37 @@ export default definePlugin({
                     return;
                 }
 
-                exportMessagesRange(ctx.channel.id, fromId, toId);
+                const parsedFrom = parseMessageInput(fromInput);
+                const parsedTo = parseMessageInput(toInput);
+
+                if (!parsedFrom || !parsedTo) {
+                    showNotification({
+                        title: "Export Messages",
+                        body: "Invalid message ID or link. Use a message ID or full message link.",
+                        icon: "❌"
+                    });
+                    return;
+                }
+
+                if (parsedFrom.channelId && parsedFrom.channelId !== ctx.channel.id) {
+                    showNotification({
+                        title: "Export Messages",
+                        body: "The 'from' message is not in this channel",
+                        icon: "❌"
+                    });
+                    return;
+                }
+
+                if (parsedTo.channelId && parsedTo.channelId !== ctx.channel.id) {
+                    showNotification({
+                        title: "Export Messages",
+                        body: "The 'to' message is not in this channel",
+                        icon: "❌"
+                    });
+                    return;
+                }
+
+                exportMessagesRange(ctx.channel.id, parsedFrom.messageId, parsedTo.messageId, useClipboard);
             }
         }
     ],
