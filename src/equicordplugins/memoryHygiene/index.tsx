@@ -7,9 +7,10 @@
 import { definePluginSettings } from "@api/Settings";
 import { EquicordDevs } from "@utils/constants";
 import { Logger } from "@utils/Logger";
+import { copyToClipboard } from "@utils/clipboard";
 import definePlugin, { OptionType } from "@utils/types";
 import { Message } from "@vencord/discord-types";
-import { Button, ChannelStore, MessageCache, MessageStore, SelectedChannelStore, Toasts } from "@webpack/common";
+import { Button, ChannelStore, MessageCache, MessageStore, React, SelectedChannelStore, Toasts } from "@webpack/common";
 
 const logger = new Logger("MemoryHygiene");
 
@@ -66,6 +67,11 @@ const settings = definePluginSettings({
                 Preview Cleanup
             </Button>
         )
+    },
+    diagnostics: {
+        type: OptionType.COMPONENT,
+        description: "",
+        component: () => <DiagnosticsPanel />
     }
 });
 
@@ -152,6 +158,109 @@ function getChannelLabel(channelId: string): string {
     return channel.name ? `#${channel.name}` : channelId;
 }
 
+function collectDiagnostics() {
+    const raw = (MessageCache as any)?._channelMessages;
+    const cacheType = raw instanceof Map ? "Map" : raw && typeof raw === "object" ? "Object" : typeof raw;
+    const channelIds = getCachedChannelIds();
+    const maxMessages = Math.max(50, Math.floor(settings.store.maxMessagesPerChannel));
+    const activeChannelId = SelectedChannelStore.getChannelId();
+    const protectedChannels = new Set<string>();
+
+    if (settings.store.keepCurrentChannel && activeChannelId) {
+        protectedChannels.add(activeChannelId);
+    }
+    for (const id of recentChannels) protectedChannels.add(id);
+
+    const channelStats = channelIds.map(id => ({
+        channelId: id,
+        count: getMessagesForChannel(id).length,
+        protected: protectedChannels.has(id)
+    }));
+
+    const totalMessages = channelStats.reduce((sum, c) => sum + c.count, 0);
+    const overLimit = channelStats.filter(c => c.count > maxMessages);
+    const topChannels = [...channelStats]
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 8);
+
+    const hasRemove = typeof (MessageCache as any).getOrCreate?.(activeChannelId || channelIds[0])?.remove === "function";
+    const hasCommit = typeof (MessageCache as any).commit === "function";
+
+    return {
+        cacheType,
+        cachedChannels: channelIds.length,
+        totalMessages,
+        overLimitChannels: overLimit.length,
+        maxMessages,
+        activeChannelId: activeChannelId || "none",
+        protectedChannels: protectedChannels.size,
+        recentChannels: recentChannels.length,
+        hasRemove,
+        hasCommit,
+        topChannels
+    };
+}
+
+function DiagnosticsPanel() {
+    const [data, setData] = React.useState(() => collectDiagnostics());
+
+    const refresh = () => setData(collectDiagnostics());
+    const copy = () => {
+        const payload = {
+            cacheType: data.cacheType,
+            cachedChannels: data.cachedChannels,
+            totalMessages: data.totalMessages,
+            overLimitChannels: data.overLimitChannels,
+            maxMessagesPerChannel: data.maxMessages,
+            activeChannelId: data.activeChannelId,
+            protectedChannels: data.protectedChannels,
+            recentChannels: data.recentChannels,
+            hasRemove: data.hasRemove,
+            hasCommit: data.hasCommit,
+            topChannels: data.topChannels.map(c => ({
+                channelId: c.channelId,
+                label: getChannelLabel(c.channelId),
+                count: c.count,
+                protected: c.protected
+            }))
+        };
+        copyToClipboard(JSON.stringify(payload, null, 2));
+        Toasts.show({
+            id: Toasts.genId(),
+            type: Toasts.Type.SUCCESS,
+            message: "Diagnostics copied to clipboard."
+        });
+    };
+
+    return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8 }}>
+                <Button onClick={refresh}>Refresh Diagnostics</Button>
+                <Button onClick={copy}>Copy Diagnostics</Button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 6 }}>
+                <div>Cache type: {data.cacheType}</div>
+                <div>Cached channels: {data.cachedChannels}</div>
+                <div>Total cached messages: {data.totalMessages}</div>
+                <div>Channels over limit: {data.overLimitChannels}</div>
+                <div>Max messages per channel: {data.maxMessages}</div>
+                <div>Active channel: {data.activeChannelId}</div>
+                <div>Protected channels: {data.protectedChannels}</div>
+                <div>Recent channels tracked: {data.recentChannels}</div>
+                <div>MessageCache.remove available: {String(data.hasRemove)}</div>
+                <div>MessageCache.commit available: {String(data.hasCommit)}</div>
+                <div>
+                    Top channels:
+                    {data.topChannels.length === 0 ? " none" : data.topChannels.map(c => ` ${getChannelLabel(c.channelId)}(${c.count}${c.protected ? "*" : ""})`).join(",")}
+                </div>
+            </div>
+            <div style={{ opacity: 0.7, fontSize: 12 }}>
+                * indicates a protected channel (current or recently visited)
+            </div>
+        </div>
+    );
+}
+
 function buildTrimPlan() {
     const activeChannelId = SelectedChannelStore.getChannelId();
     const protectedChannels = new Set<string>();
@@ -187,7 +296,7 @@ function runCleanup(showToast: boolean) {
             totalRemoved += trimChannel(entry.channelId, Math.max(50, Math.floor(settings.store.maxMessagesPerChannel)));
         }
 
-        if (showToast) {
+        if (showToast && (totalRemoved > 0 || plan.length > 0)) {
             Toasts.show({
                 id: Toasts.genId(),
                 type: Toasts.Type.SUCCESS,
